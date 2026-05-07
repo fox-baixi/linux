@@ -1,35 +1,36 @@
 #!/bin/bash
 
-# --- 1. 环境预检 ---
+# --- 颜色定义 ---
+INFO='\033[1;32m'    # 绿色 (标题/成功)
+OPT='\033[0;33m'     # 黄色 (选项)
+INPUT='\033[1;36m'   # 青色 (提问)
+RESET='\033[0m'      # 重置
+
+# --- 1. 环境预检 (静默执行) ---
 mem_total=$(free -m | awk '/Mem:/ {print $2}')
 cpu_cores=$(nproc)
 cpu_model=$(grep "model name" /proc/cpuinfo | head -1 | cut -d ":" -f2)
 
-# 检测 IPv4 出口
+# IPv4 检测
 if curl -s4m2 1.1.1.1 > /dev/null 2>&1; then
-    ipv4_exit=true
-    warp_default="n"
+    ipv4_status="已有 IPv4"
+    warp_default="2" # 默认跳过
 else
-    ipv4_exit=false
-    warp_default="y"
+    ipv4_status="无 IPv4"
+    warp_default="1" # 默认安装
 fi
 
-# 算法推荐逻辑
-if [ "$cpu_cores" -ge 2 ]; then
+# 算法推荐
+if [ "$cpu_cores" -ge 2 ] || [[ "$cpu_model" =~ "E3"|"E5"|"Xeon"|"Intel"|"AMD" ]]; then
     default_algo="zstd"
-    algo_reason="多核"
-elif [[ "$cpu_model" =~ "E3"|"E5"|"Xeon"|"Intel"|"AMD" ]]; then
-    default_algo="zstd"
-    algo_reason="高性能单核"
 else
     default_algo="lz4"
-    algo_reason="弱鸡单核"
 fi
 
-# ZRAM 大小阶梯逻辑
+# ZRAM 大小计算 (阶梯规则)
 if [ "$mem_total" -lt 1024 ]; then
     calc=$(( mem_total * 2 ))
-elif [ "$mem_total" -ge 1024 ] && [ "$mem_total" -lt 2048 ]; then
+elif [ "$mem_total" -lt 2048 ]; then
     calc=2048
 else
     calc=$mem_total
@@ -37,70 +38,78 @@ fi
 [ $calc -gt 4096 ] && calc=4096
 auto_zram_s=$(( (calc + 256) / 512 * 512 ))
 
-# --- 2. 交互菜单 ---
+# --- 2. 交互布局 ---
 
-echo "--------------------------------"
-# 选项 0: WARP 安装 (放在最前面)
-read -p "0. 是否安装 WARP? [y/N] (由于${ipv4_exit:+已有IPv4}${ipv4_exit:-无IPv4}，默认$warp_default): " warp_on
-warp_on=${warp_on:-$warp_default}
+clear
+echo -e "${INFO}================================"
+echo -e "       Debian 系统初始化脚本"
+echo -e "================================${RESET}"
 
-# 选项 1: 工具 (已移除 curl/wget)
-echo "1. 基础工具选择: [1] 精简 (sudo) | [2] 基础 (git nano unzip...)"
-read -p "选择 [回车默认1]: " tool_p
+# 0. WARP 选项
+echo -e "\n${INFO}0. WARP 网络扩展 (当前: $ipv4_status)${RESET}"
+echo -e "${OPT}1. 安装 WARP${RESET}"
+echo -e "${OPT}2. 跳过 (默认)${RESET}"
+read -p "$(echo -e ${INPUT}请选择 [默认 $warp_default]: ${RESET})" warp_choice
+warp_choice=${warp_choice:-$warp_default}
+
+# 1. 工具选项
+echo -e "\n${INFO}1. 基础工具安装${RESET}"
+echo -e "${OPT}1. 精简版 (sudo)${RESET}"
+echo -e "${OPT}2. 基础版 (git, nano, unzip, tar, sudo)${RESET}"
+read -p "$(echo -e ${INPUT}请选择 [回车默认 1]: ${RESET})" tool_p
 tool_p=${tool_p:-1}
 
-# 选项 2: ZRAM
-read -p "2. 开启内存压缩 (ZRAM)? [Y/n] (默认开启): " zram_on
-zram_on=${zram_on:-y}
+# 2. ZRAM 选项
+echo -e "\n${INFO}2. 内存压缩 (ZRAM)${RESET}"
+echo -e "${OPT}1. 开启 (默认)${RESET}"
+echo -e "${OPT}2. 关闭${RESET}"
+read -p "$(echo -e ${INPUT}请选择 [回车默认 1]: ${RESET})" zram_on
+zram_on=${zram_on:-1}
 
-if [[ "$zram_on" =~ ^[Yy]$ ]]; then
-    echo "3. 压缩算法选择 [系统推荐: $default_algo ($algo_reason)]:"
-    echo "   1) lz4 | 2) zstd"
-    read -p "选择 [回车自动: $default_algo]: " algo_choice
+if [ "$zram_on" == "1" ]; then
+    echo -e "\n${INFO}3. 压缩算法选择${RESET}"
+    echo -e "${OPT}1. lz4${RESET}"
+    echo -e "${OPT}2. zstd${RESET}"
+    read -p "$(echo -e ${INPUT}请选择 [回车自动: $default_algo]: ${RESET})" algo_choice
     case $algo_choice in
         1) final_algo="lz4" ;;
         2) final_algo="zstd" ;;
         *) final_algo=$default_algo ;;
     esac
 
-    read -p "4. ZRAM 大小 [回车自动: ${auto_zram_s}MB]: " zram_s
+    read -p "$(echo -e ${INPUT}4. ZRAM 大小 [回车自动: ${auto_zram_s}MB]: ${RESET})" zram_s
     zram_s=${zram_s:-$auto_zram_s}
 fi
 
-# 选项 5: Swap
-if [[ "$zram_on" =~ ^[Yy]$ ]]; then
-    auto_swap_s=1024
-else
-    auto_swap_s=$mem_total
-    [ $auto_swap_s -gt 2048 ] && auto_swap_s=2048
+# 5. Swap 选项
+if [ "$zram_on" == "1" ]; then auto_swap_s=1024; else
+    auto_swap_s=$mem_total; [ $auto_swap_s -gt 2048 ] && auto_swap_s=2048
 fi
-read -p "5. 磁盘 Swap 大小 [回车自动: ${auto_swap_s}MB]: " swap_s
+echo -e "\n${INFO}5. 磁盘 Swap 设定${RESET}"
+read -p "$(echo -e ${INPUT}请输入大小 [回车自动: ${auto_swap_s}MB]: ${RESET})" swap_s
 swap_s=${swap_s:-$auto_swap_s}
 
-# 选项 6: Docker
-read -p "6. 安装 Docker? [y/N] (默认n): " docker_on
-docker_on=${docker_on:-n}
+# 6. Docker 选项
+echo -e "\n${INFO}6. Docker 环境${RESET}"
+echo -e "${OPT}1. 安装 (含 IPv6 & 日志限制)${RESET}"
+echo -e "${OPT}2. 跳过 (默认)${RESET}"
+read -p "$(echo -e ${INPUT}请选择 [回车默认 2]: ${RESET})" docker_on
+docker_on=${docker_on:-2}
 
 # --- 3. 执行阶段 ---
 
-echo ">> 正在启动初始化..."
+echo -e "\n${INFO}>> 开始执行初始化任务...${RESET}"
 
-# 1. 优先安装 WARP
-if [[ "$warp_on" =~ ^[Yy]$ ]]; then
-    echo ">> 正在安装 WARP..."
+# WARP 执行
+if [ "$warp_choice" == "1" ]; then
     wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh && bash menu.sh
 fi
 
-# 2. 系统更新与工具
 apt update && apt upgrade -y
-if [ "$tool_p" == "1" ]; then
-    apt install -y sudo
-else
-    apt install -y git nano unzip tar sudo
-fi
+[ "$tool_p" == "1" ] && apt install -y sudo || apt install -y git nano unzip tar sudo
 apt dist-upgrade -y
 
-# 3. 基础优化
+# BBR & 时区
 timedatectl set-timezone Asia/Shanghai
 if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf; then
     echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
@@ -108,8 +117,8 @@ if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf; then
     sysctl -p
 fi
 
-# 4. ZRAM 配置
-if [[ "$zram_on" =~ ^[Yy]$ ]]; then
+# ZRAM 配置
+if [ "$zram_on" == "1" ]; then
     apt install zram-tools -y
     cat > /etc/default/zramswap <<EOF
 ALGO=$final_algo
@@ -117,19 +126,18 @@ SIZE=$zram_s
 PRIORITY=100
 EOF
     service zramswap reload
-    echo ">> ZRAM 已配置: $final_algo / ${zram_s}MB"
+    echo -e "${INFO}>> ZRAM 配置完成 ($final_algo)${RESET}"
 fi
 
-# 5. Swap 配置
+# Swap 写入
 if [ ! -f /swapfile ]; then
     fallocate -l ${swap_s}M /swapfile && chmod 600 /swapfile
     mkswap /swapfile && swapon /swapfile
     echo '/swapfile none swap sw 0 0' >> /etc/fstab
-    echo ">> Swap 已创建 (${swap_s}MB)"
 fi
 
-# 6. Docker 配置
-if [[ "$docker_on" =~ ^[Yy]$ ]]; then
+# Docker 安装
+if [ "$docker_on" == "1" ]; then
     curl -fsSL https://get.docker.com | bash
     mkdir -p /etc/docker
     cat > /etc/docker/daemon.json <<EOF
@@ -142,9 +150,10 @@ EOF
     docker network create --driver bridge --ipv6 --subnet fd00::/48 ipv6-network || true
 fi
 
-# 7. 时间同步
+# 时间同步
 apt install chrony -y && systemctl enable --now chrony
 
-echo "--------------------------------"
-echo "初始化完成！"
+echo -e "\n${INFO}================================"
+echo -e "       所有任务初始化完成！"
+echo -e "================================${RESET}"
 date
