@@ -1,12 +1,13 @@
 #!/bin/bash
 
 # --- 颜色定义 ---
-INFO='\033[1;32m'    # 绿色 (标题/成功)
+INFO='\033[1;32m'    # 绿色 (标题)
 OPT='\033[0;33m'     # 黄色 (选项)
-INPUT='\033[1;36m'   # 青色 (提问)
+INPUT='\033[1;36m'   # 青色 (请选择/请输入)
+AUTO='\033[1;35m'    # 紫色 (自动数值提示)
 RESET='\033[0m'      # 重置
 
-# --- 1. 环境预检 (静默执行) ---
+# --- 1. 环境预检 ---
 mem_total=$(free -m | awk '/Mem:/ {print $2}')
 cpu_cores=$(nproc)
 cpu_model=$(grep "model name" /proc/cpuinfo | head -1 | cut -d ":" -f2)
@@ -14,20 +15,20 @@ cpu_model=$(grep "model name" /proc/cpuinfo | head -1 | cut -d ":" -f2)
 # IPv4 检测
 if curl -s4m2 1.1.1.1 > /dev/null 2>&1; then
     ipv4_status="已有 IPv4"
-    warp_default="2" # 默认跳过
+    warp_default="2"
 else
     ipv4_status="无 IPv4"
-    warp_default="1" # 默认安装
+    warp_default="1"
 fi
 
 # 算法推荐
 if [ "$cpu_cores" -ge 2 ] || [[ "$cpu_model" =~ "E3"|"E5"|"Xeon"|"Intel"|"AMD" ]]; then
-    default_algo="zstd"
+    default_algo="zstd"; algo_idx="2"
 else
-    default_algo="lz4"
+    default_algo="lz4"; algo_idx="1"
 fi
 
-# ZRAM 大小计算 (阶梯规则)
+# ZRAM 大小计算
 if [ "$mem_total" -lt 1024 ]; then
     calc=$(( mem_total * 2 ))
 elif [ "$mem_total" -lt 2048 ]; then
@@ -45,67 +46,70 @@ echo -e "${INFO}================================"
 echo -e "       Debian 系统初始化脚本"
 echo -e "================================${RESET}"
 
-# 0. WARP 选项
+# 0. WARP
 echo -e "\n${INFO}0. WARP 网络扩展 (当前: $ipv4_status)${RESET}"
-echo -e "${OPT}1. 安装 WARP${RESET}"
-echo -e "${OPT}2. 跳过 (默认)${RESET}"
-read -p "$(echo -e ${INPUT}请选择 [默认 $warp_default]: ${RESET})" warp_choice
+echo -e "${OPT}1. 安装 WARP$( [ "$warp_default" == "1" ] && echo " (默认)" )${RESET}"
+echo -e "${OPT}2. 跳过$( [ "$warp_default" == "2" ] && echo " (默认)" )${RESET}"
+read -p "$(echo -e ${INPUT}请选择: ${RESET})" warp_choice
 warp_choice=${warp_choice:-$warp_default}
 
-# 1. 工具选项
+# 1. 工具
 echo -e "\n${INFO}1. 基础工具安装${RESET}"
-echo -e "${OPT}1. 精简版 (sudo)${RESET}"
+echo -e "${OPT}1. 精简版 (sudo) (默认)${RESET}"
 echo -e "${OPT}2. 基础版 (git, nano, unzip, tar, sudo)${RESET}"
-read -p "$(echo -e ${INPUT}请选择 [回车默认 1]: ${RESET})" tool_p
+read -p "$(echo -e ${INPUT}请选择: ${RESET})" tool_p
 tool_p=${tool_p:-1}
 
-# 2. ZRAM 选项
+# 2. ZRAM
 echo -e "\n${INFO}2. 内存压缩 (ZRAM)${RESET}"
 echo -e "${OPT}1. 开启 (默认)${RESET}"
 echo -e "${OPT}2. 关闭${RESET}"
-read -p "$(echo -e ${INPUT}请选择 [回车默认 1]: ${RESET})" zram_on
+read -p "$(echo -e ${INPUT}请选择: ${RESET})" zram_on
 zram_on=${zram_on:-1}
 
 if [ "$zram_on" == "1" ]; then
     echo -e "\n${INFO}3. 压缩算法选择${RESET}"
-    echo -e "${OPT}1. lz4${RESET}"
-    echo -e "${OPT}2. zstd${RESET}"
-    read -p "$(echo -e ${INPUT}请选择 [回车自动: $default_algo]: ${RESET})" algo_choice
+    echo -e "${OPT}1. lz4$( [ "$algo_idx" == "1" ] && echo " (默认)" )${RESET}"
+    echo -e "${OPT}2. zstd$( [ "$algo_idx" == "2" ] && echo " (默认)" )${RESET}"
+    read -p "$(echo -e ${INPUT}请选择: ${RESET})" algo_choice
     case $algo_choice in
         1) final_algo="lz4" ;;
         2) final_algo="zstd" ;;
         *) final_algo=$default_algo ;;
     esac
 
-    read -p "$(echo -e ${INPUT}4. ZRAM 大小 [回车自动: ${auto_zram_s}MB]: ${RESET})" zram_s
+    # 4. ZRAM 大小 (参照 5 的写法)
+    echo -e "\n${INFO}4. ZRAM 大小设定${RESET}"
+    read -p "$(echo -e ${INPUT}请输入大小 ${AUTO}[回车自动: ${auto_zram_s}MB]: ${RESET})" zram_s
     zram_s=${zram_s:-$auto_zram_s}
 fi
 
-# 5. Swap 选项
+# 5. Swap
 if [ "$zram_on" == "1" ]; then auto_swap_s=1024; else
     auto_swap_s=$mem_total; [ $auto_swap_s -gt 2048 ] && auto_swap_s=2048
 fi
 echo -e "\n${INFO}5. 磁盘 Swap 设定${RESET}"
-read -p "$(echo -e ${INPUT}请输入大小 [回车自动: ${auto_swap_s}MB]: ${RESET})" swap_s
+read -p "$(echo -e ${INPUT}请输入大小 ${AUTO}[回车自动: ${auto_swap_s}MB]: ${RESET})" swap_s
 swap_s=${swap_s:-$auto_swap_s}
 
-# 6. Docker 选项
+# 6. Docker
 echo -e "\n${INFO}6. Docker 环境${RESET}"
 echo -e "${OPT}1. 安装 (含 IPv6 & 日志限制)${RESET}"
 echo -e "${OPT}2. 跳过 (默认)${RESET}"
-read -p "$(echo -e ${INPUT}请选择 [回车默认 2]: ${RESET})" docker_on
+read -p "$(echo -e ${INPUT}请选择: ${RESET})" docker_on
 docker_on=${docker_on:-2}
 
 # --- 3. 执行阶段 ---
 
 echo -e "\n${INFO}>> 开始执行初始化任务...${RESET}"
 
-# WARP 执行
+# 基础包更新 (必须先跑，保证 wget 可用)
+apt update && apt upgrade -y
+
 if [ "$warp_choice" == "1" ]; then
     wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh && bash menu.sh
 fi
 
-apt update && apt upgrade -y
 [ "$tool_p" == "1" ] && apt install -y sudo || apt install -y git nano unzip tar sudo
 apt dist-upgrade -y
 
