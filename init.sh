@@ -24,7 +24,7 @@ else
     default_algo="lz4"; algo_idx="1"
 fi
 
-# ZRAM 大小阶梯算法
+# ZRAM 大小阶梯算法 (512MB 对齐)
 if [ "$mem_total" -lt 1024 ]; then
     calc=$(( mem_total * 2 ))
 elif [ "$mem_total" -lt 2048 ]; then
@@ -77,14 +77,21 @@ if [ "$zram_on" == "1" ]; then
     echo -e "\n${INFO}4. ZRAM 大小设定${RESET}"
     read -p "$(echo -e ${INPUT}请输入大小 ${AUTO}[回车自动: ${auto_zram_s}MB]: ${RESET})" zram_s
     zram_s=${zram_s:-$auto_zram_s}
-    # 强制修正：如果开启了 ZRAM 但输入了 0 或非法字符，强制回退到自动值
     if [ "$zram_s" -le 0 ] 2>/dev/null; then zram_s=$auto_zram_s; fi
 fi
 
-# 5. Swap
-if [ "$zram_on" == "1" ]; then auto_swap_s=1024; else
-    auto_swap_s=$mem_total; [ $auto_swap_s -gt 2048 ] && auto_swap_s=2048
+# 5. Swap 逻辑优化：统一进行 512MB 对齐
+if [ "$zram_on" == "1" ]; then 
+    auto_swap_s=1024
+else
+    # 没开 ZRAM 时，尝试设为内存等大，但同样进行 512MB 对齐，最大 2048MB
+    calc_swap=$mem_total
+    [ $calc_swap -gt 2048 ] && calc_swap=2048
+    auto_swap_s=$(( (calc_swap + 256) / 512 * 512 ))
+    # 兜底：如果机器内存极小，对齐后为0，则强制给 512MB
+    [ $auto_swap_s -lt 512 ] && auto_swap_s=512
 fi
+
 echo -e "\n${INFO}5. 磁盘 Swap 设定${RESET}"
 read -p "$(echo -e ${INPUT}请输入大小 ${AUTO}[回车自动: ${auto_swap_s}MB, 输入0不启用]: ${RESET})" swap_s
 swap_s=${swap_s:-$auto_swap_s}
@@ -97,7 +104,6 @@ read -p "$(echo -e ${INPUT}请选择: ${RESET})" docker_on
 docker_on=${docker_on:-2}
 
 # --- 3. 执行阶段 ---
-
 echo -e "\n${INFO}>> 开始执行初始化任务...${RESET}"
 
 apt update && apt upgrade -y
@@ -116,7 +122,6 @@ if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf; then
     sysctl -p
 fi
 
-# ZRAM 执行
 if [ "$zram_on" == "1" ]; then
     apt install zram-tools -y
     cat > /etc/default/zramswap <<EOF
@@ -128,7 +133,6 @@ EOF
     echo -e "${INFO}>> ZRAM 配置完成 ($final_algo / ${zram_s}MB)${RESET}"
 fi
 
-# Swap 执行 (只有非 0 时才创建)
 if [ "$swap_s" != "0" ]; then
     if [ ! -f /swapfile ]; then
         fallocate -l ${swap_s}M /swapfile && chmod 600 /swapfile
@@ -140,7 +144,6 @@ else
     echo -e "${INFO}>> 已跳过磁盘 Swap 设定${RESET}"
 fi
 
-# Docker 执行
 if [ "$docker_on" == "1" ]; then
     curl -fsSL https://get.docker.com | bash
     mkdir -p /etc/docker
