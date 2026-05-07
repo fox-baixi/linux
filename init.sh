@@ -77,15 +77,12 @@ if [ "$zram_on" == "1" ]; then
     echo -e "\n${INFO}4. ZRAM 大小设定${RESET}"
     read -p "$(echo -e ${INPUT}请输入大小 ${AUTO}[回车自动: ${auto_zram_s}MB]: ${RESET})" zram_s
     zram_s=${zram_s:-$auto_zram_s}
-    if [ "$zram_s" -le 0 ] 2>/dev/null; then zram_s=$auto_zram_s; fi
+    [ "$zram_s" -le 0 ] 2>/dev/null && zram_s=$auto_zram_s
 fi
 
 # 5. Swap
-if [ "$zram_on" == "1" ]; then 
-    auto_swap_s=1024
-else
-    calc_swap=$mem_total
-    [ $calc_swap -gt 2048 ] && calc_swap=2048
+if [ "$zram_on" == "1" ]; then auto_swap_s=1024; else
+    calc_swap=$mem_total; [ $calc_swap -gt 2048 ] && calc_swap=2048
     auto_swap_s=$(( (calc_swap + 256) / 512 * 512 ))
     [ $auto_swap_s -lt 512 ] && auto_swap_s=512
 fi
@@ -101,17 +98,29 @@ read -p "$(echo -e ${INPUT}请选择: ${RESET})" docker_on
 docker_on=${docker_on:-2}
 
 # --- 3. 执行阶段 ---
-echo -e "\n${INFO}>> 开始执行初始化任务...${RESET}"
+echo -e "\n${INFO}>> 正在全力初始化中，请稍候...${RESET}"
+
+# 初始化报告变量
+R_WARP="跳过"; R_TOOLS="精简版"; R_BBR="已开启"; R_ZRAM="未启用"; R_SWAP="未启用"; R_DOCKER="未安装"
 
 apt update && apt upgrade -y
 
+# WARP
 if [ "$warp_choice" == "1" ]; then
     wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh && bash menu.sh
+    R_WARP="已安装"
 fi
 
-[ "$tool_p" == "1" ] && apt install -y sudo || apt install -y git nano unzip tar sudo
+# 工具
+if [ "$tool_p" == "1" ]; then
+    apt install -y sudo
+else
+    apt install -y git nano unzip tar sudo
+    R_TOOLS="基础版"
+fi
 apt dist-upgrade -y
 
+# BBR & 时区
 timedatectl set-timezone Asia/Shanghai
 if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf; then
     echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
@@ -119,6 +128,7 @@ if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf; then
     sysctl -p
 fi
 
+# ZRAM
 if [ "$zram_on" == "1" ]; then
     apt install zram-tools -y
     cat > /etc/default/zramswap <<EOF
@@ -127,35 +137,29 @@ SIZE=$zram_s
 PRIORITY=100
 EOF
     service zramswap reload
-    echo -e "${INFO}>> ZRAM 配置完成 ($final_algo / ${zram_s}MB)${RESET}"
+    R_ZRAM="$final_algo / ${zram_s}MB"
 fi
 
-# Swap 执行阶段 (含存量检测)
+# Swap
 if [ "$swap_s" != "0" ]; then
     current_swap=0
     [ -f /swapfile ] && current_swap=$(du -m /swapfile | cut -f1)
-
     if [ "$current_swap" != "$swap_s" ]; then
-        echo -e "${INFO}>> 更新磁盘 Swap: ${current_swap}MB -> ${swap_s}MB...${RESET}"
         [ -f /swapfile ] && swapoff /swapfile && rm -f /swapfile
         sed -i '/\/swapfile/d' /etc/fstab
-        
         fallocate -l ${swap_s}M /swapfile && chmod 600 /swapfile
         mkswap /swapfile && swapon /swapfile
         echo '/swapfile none swap sw 0 0' >> /etc/fstab
-    else
-        echo -e "${INFO}>> 现有 Swap 大小符合要求，跳过创建${RESET}"
     fi
+    R_SWAP="${swap_s}MB"
 else
-    # 如果用户选 0，且原本存在 Swap，建议将其关闭
     if [ -f /swapfile ]; then
-        echo -e "${INFO}>> 检测到 0 输入，正在关闭并移除现有 Swap...${RESET}"
         swapoff /swapfile && rm -f /swapfile
         sed -i '/\/swapfile/d' /etc/fstab
     fi
-    echo -e "${INFO}>> 已禁用磁盘 Swap${RESET}"
 fi
 
+# Docker
 if [ "$docker_on" == "1" ]; then
     curl -fsSL https://get.docker.com | bash
     mkdir -p /etc/docker
@@ -167,11 +171,23 @@ if [ "$docker_on" == "1" ]; then
 EOF
     systemctl restart docker
     docker network create --driver bridge --ipv6 --subnet fd00::/48 ipv6-network || true
+    R_DOCKER="已安装 (含 IPv6 & 日志限制)"
 fi
 
 apt install chrony -y && systemctl enable --now chrony
 
-echo -e "\n${INFO}================================"
-echo -e "       所有任务初始化完成！"
-echo -e "================================${RESET}"
+# --- 4. 任务报告面板 ---
+clear
+echo -e "${INFO}========================================"
+echo -e "         系统初始化任务报告"
+echo -e "========================================${RESET}"
+echo -e "  ${OPT}WARP 网络:    ${RESET} $R_WARP"
+echo -e "  ${OPT}软件工具:    ${RESET} $R_TOOLS"
+echo -e "  ${OPT}网络优化:    ${RESET} $R_BBR"
+echo -e "  ${OPT}内存压缩:    ${RESET} $R_ZRAM"
+echo -e "  ${OPT}磁盘 Swap:   ${RESET} $R_SWAP"
+echo -e "  ${OPT}Docker:      ${RESET} $R_DOCKER"
+echo -e "  ${OPT}时间同步:    ${RESET} 已完成 (Chrony)"
+echo -e "${INFO}========================================${RESET}"
+echo -e "  ${INFO}全部搞定！系统已处于最佳状态。${RESET}"
 date
