@@ -80,18 +80,15 @@ if [ "$zram_on" == "1" ]; then
     if [ "$zram_s" -le 0 ] 2>/dev/null; then zram_s=$auto_zram_s; fi
 fi
 
-# 5. Swap 逻辑优化：统一进行 512MB 对齐
+# 5. Swap
 if [ "$zram_on" == "1" ]; then 
     auto_swap_s=1024
 else
-    # 没开 ZRAM 时，尝试设为内存等大，但同样进行 512MB 对齐，最大 2048MB
     calc_swap=$mem_total
     [ $calc_swap -gt 2048 ] && calc_swap=2048
     auto_swap_s=$(( (calc_swap + 256) / 512 * 512 ))
-    # 兜底：如果机器内存极小，对齐后为0，则强制给 512MB
     [ $auto_swap_s -lt 512 ] && auto_swap_s=512
 fi
-
 echo -e "\n${INFO}5. 磁盘 Swap 设定${RESET}"
 read -p "$(echo -e ${INPUT}请输入大小 ${AUTO}[回车自动: ${auto_swap_s}MB, 输入0不启用]: ${RESET})" swap_s
 swap_s=${swap_s:-$auto_swap_s}
@@ -133,15 +130,30 @@ EOF
     echo -e "${INFO}>> ZRAM 配置完成 ($final_algo / ${zram_s}MB)${RESET}"
 fi
 
+# Swap 执行阶段 (含存量检测)
 if [ "$swap_s" != "0" ]; then
-    if [ ! -f /swapfile ]; then
+    current_swap=0
+    [ -f /swapfile ] && current_swap=$(du -m /swapfile | cut -f1)
+
+    if [ "$current_swap" != "$swap_s" ]; then
+        echo -e "${INFO}>> 更新磁盘 Swap: ${current_swap}MB -> ${swap_s}MB...${RESET}"
+        [ -f /swapfile ] && swapoff /swapfile && rm -f /swapfile
+        sed -i '/\/swapfile/d' /etc/fstab
+        
         fallocate -l ${swap_s}M /swapfile && chmod 600 /swapfile
         mkswap /swapfile && swapon /swapfile
         echo '/swapfile none swap sw 0 0' >> /etc/fstab
-        echo -e "${INFO}>> 磁盘 Swap 已创建 (${swap_s}MB)${RESET}"
+    else
+        echo -e "${INFO}>> 现有 Swap 大小符合要求，跳过创建${RESET}"
     fi
 else
-    echo -e "${INFO}>> 已跳过磁盘 Swap 设定${RESET}"
+    # 如果用户选 0，且原本存在 Swap，建议将其关闭
+    if [ -f /swapfile ]; then
+        echo -e "${INFO}>> 检测到 0 输入，正在关闭并移除现有 Swap...${RESET}"
+        swapoff /swapfile && rm -f /swapfile
+        sed -i '/\/swapfile/d' /etc/fstab
+    fi
+    echo -e "${INFO}>> 已禁用磁盘 Swap${RESET}"
 fi
 
 if [ "$docker_on" == "1" ]; then
