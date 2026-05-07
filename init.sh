@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # --- 颜色定义 ---
-INFO='\033[1;32m'    # 绿色 (标题)
-OPT='\033[0;33m'     # 黄色 (选项)
-INPUT='\033[1;36m'   # 青色 (请选择/请输入)
-AUTO='\033[1;35m'    # 紫色 (自动数值提示)
+INFO='\033[1;32m'    # 绿色
+OPT='\033[0;33m'     # 黄色
+INPUT='\033[1;36m'   # 青色
+AUTO='\033[1;35m'    # 紫色
 RESET='\033[0m'      # 重置
 
 # --- 1. 环境预检 ---
@@ -12,23 +12,19 @@ mem_total=$(free -m | awk '/Mem:/ {print $2}')
 cpu_cores=$(nproc)
 cpu_model=$(grep "model name" /proc/cpuinfo | head -1 | cut -d ":" -f2)
 
-# IPv4 检测
 if curl -s4m2 1.1.1.1 > /dev/null 2>&1; then
-    ipv4_status="已有 IPv4"
-    warp_default="2"
+    ipv4_status="已有 IPv4"; warp_default="2"
 else
-    ipv4_status="无 IPv4"
-    warp_default="1"
+    ipv4_status="无 IPv4"; warp_default="1"
 fi
 
-# 算法推荐
 if [ "$cpu_cores" -ge 2 ] || [[ "$cpu_model" =~ "E3"|"E5"|"Xeon"|"Intel"|"AMD" ]]; then
     default_algo="zstd"; algo_idx="2"
 else
     default_algo="lz4"; algo_idx="1"
 fi
 
-# ZRAM 大小计算
+# ZRAM 大小阶梯算法
 if [ "$mem_total" -lt 1024 ]; then
     calc=$(( mem_total * 2 ))
 elif [ "$mem_total" -lt 2048 ]; then
@@ -78,10 +74,11 @@ if [ "$zram_on" == "1" ]; then
         *) final_algo=$default_algo ;;
     esac
 
-    # 4. ZRAM 大小 (参照 5 的写法)
     echo -e "\n${INFO}4. ZRAM 大小设定${RESET}"
     read -p "$(echo -e ${INPUT}请输入大小 ${AUTO}[回车自动: ${auto_zram_s}MB]: ${RESET})" zram_s
     zram_s=${zram_s:-$auto_zram_s}
+    # 强制修正：如果开启了 ZRAM 但输入了 0 或非法字符，强制回退到自动值
+    if [ "$zram_s" -le 0 ] 2>/dev/null; then zram_s=$auto_zram_s; fi
 fi
 
 # 5. Swap
@@ -89,7 +86,7 @@ if [ "$zram_on" == "1" ]; then auto_swap_s=1024; else
     auto_swap_s=$mem_total; [ $auto_swap_s -gt 2048 ] && auto_swap_s=2048
 fi
 echo -e "\n${INFO}5. 磁盘 Swap 设定${RESET}"
-read -p "$(echo -e ${INPUT}请输入大小 ${AUTO}[回车自动: ${auto_swap_s}MB]: ${RESET})" swap_s
+read -p "$(echo -e ${INPUT}请输入大小 ${AUTO}[回车自动: ${auto_swap_s}MB, 输入0不启用]: ${RESET})" swap_s
 swap_s=${swap_s:-$auto_swap_s}
 
 # 6. Docker
@@ -103,7 +100,6 @@ docker_on=${docker_on:-2}
 
 echo -e "\n${INFO}>> 开始执行初始化任务...${RESET}"
 
-# 基础包更新 (必须先跑，保证 wget 可用)
 apt update && apt upgrade -y
 
 if [ "$warp_choice" == "1" ]; then
@@ -113,7 +109,6 @@ fi
 [ "$tool_p" == "1" ] && apt install -y sudo || apt install -y git nano unzip tar sudo
 apt dist-upgrade -y
 
-# BBR & 时区
 timedatectl set-timezone Asia/Shanghai
 if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf; then
     echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
@@ -121,7 +116,7 @@ if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf; then
     sysctl -p
 fi
 
-# ZRAM 配置
+# ZRAM 执行
 if [ "$zram_on" == "1" ]; then
     apt install zram-tools -y
     cat > /etc/default/zramswap <<EOF
@@ -130,17 +125,22 @@ SIZE=$zram_s
 PRIORITY=100
 EOF
     service zramswap reload
-    echo -e "${INFO}>> ZRAM 配置完成 ($final_algo)${RESET}"
+    echo -e "${INFO}>> ZRAM 配置完成 ($final_algo / ${zram_s}MB)${RESET}"
 fi
 
-# Swap 写入
-if [ ! -f /swapfile ]; then
-    fallocate -l ${swap_s}M /swapfile && chmod 600 /swapfile
-    mkswap /swapfile && swapon /swapfile
-    echo '/swapfile none swap sw 0 0' >> /etc/fstab
+# Swap 执行 (只有非 0 时才创建)
+if [ "$swap_s" != "0" ]; then
+    if [ ! -f /swapfile ]; then
+        fallocate -l ${swap_s}M /swapfile && chmod 600 /swapfile
+        mkswap /swapfile && swapon /swapfile
+        echo '/swapfile none swap sw 0 0' >> /etc/fstab
+        echo -e "${INFO}>> 磁盘 Swap 已创建 (${swap_s}MB)${RESET}"
+    fi
+else
+    echo -e "${INFO}>> 已跳过磁盘 Swap 设定${RESET}"
 fi
 
-# Docker 安装
+# Docker 执行
 if [ "$docker_on" == "1" ]; then
     curl -fsSL https://get.docker.com | bash
     mkdir -p /etc/docker
@@ -154,7 +154,6 @@ EOF
     docker network create --driver bridge --ipv6 --subnet fd00::/48 ipv6-network || true
 fi
 
-# 时间同步
 apt install chrony -y && systemctl enable --now chrony
 
 echo -e "\n${INFO}================================"
