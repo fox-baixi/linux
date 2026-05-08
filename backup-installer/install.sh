@@ -348,25 +348,6 @@ install_flow() {
   pause
 }
 
-upgrade_flow() {
-  prompt_default_into INSTALL_DIR "安装目录" "$DEFAULT_INSTALL_DIR"
-  set_paths "$INSTALL_DIR"
-  printf "将升级脚本，保留现有配置和定时任务，是否继续？ [Y/n]: "
-  IFS= read -r confirm
-  case "${confirm:-Y}" in
-    Y|y|"")
-      ensure_runtime_dependencies
-      mkdir -p "$INSTALL_DIR"
-      download_files
-      echo "升级完成。"
-      ;;
-    *)
-      echo "已取消。"
-      ;;
-  esac
-  pause
-}
-
 run_once_flow() {
   if ! resolve_existing_install_dir; then
     echo "默认安装目录 ${DEFAULT_INSTALL_DIR} 未找到配置。"
@@ -390,6 +371,25 @@ run_once_flow() {
   fi
   echo "开始执行一次备份..."
   bash "$BACKUP_SCRIPT_PATH"
+  pause
+}
+
+upgrade_flow() {
+  prompt_default_into INSTALL_DIR "安装目录" "$DEFAULT_INSTALL_DIR"
+  set_paths "$INSTALL_DIR"
+  printf "将升级脚本，保留现有配置和定时任务，是否继续？ [Y/n]: "
+  IFS= read -r confirm
+  case "${confirm:-Y}" in
+    Y|y|"")
+      ensure_runtime_dependencies
+      mkdir -p "$INSTALL_DIR"
+      download_files
+      echo "升级完成。"
+      ;;
+    *)
+      echo "已取消。"
+      ;;
+  esac
   pause
 }
 
@@ -447,8 +447,8 @@ main_menu() {
     clear || true
     echo "请选择操作："
     echo "1) 安装"
-    echo "2) 升级"
-    echo "3) 执行一次"
+    echo "2) 执行备份"
+    echo "3) 升级"
     echo "4) 卸载"
     echo "5) 查看/修改配置"
     echo "6) 查看日志"
@@ -457,8 +457,8 @@ main_menu() {
     IFS= read -r choice
     case "$choice" in
       1) install_flow ;;
-      2) upgrade_flow ;;
-      3) run_once_flow ;;
+      2) run_once_flow ;;
+      3) upgrade_flow ;;
       4) uninstall_flow ;;
       5) modify_config_flow ;;
       6) view_logs ;;
