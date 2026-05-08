@@ -10,6 +10,7 @@ INSTALL_DIR=""
 BACKUP_ENV_PATH=""
 BACKUP_SCRIPT_PATH=""
 LOG_FILE="$LOG_FILE_DEFAULT"
+CRON_EXPR=""
 
 pause() {
   read -r -p "按回车继续..." _
@@ -99,6 +100,7 @@ EOF
 }
 
 build_cron_expr() {
+  CRON_EXPR=""
   while true; do
     echo "请选择定时方式："
     echo "1) 每天凌晨 x 点"
@@ -119,7 +121,7 @@ build_cron_expr() {
         expr=$(read_required "请输入 cron 表达式")
         ;;
       0)
-        printf ''
+        CRON_EXPR=""
         return
         ;;
       *)
@@ -133,7 +135,7 @@ build_cron_expr() {
     read -r -p "是否确认使用这个表达式？ [Y/n]: " confirm
     case "${confirm:-Y}" in
       Y|y|"")
-        printf '%s' "$expr"
+        CRON_EXPR="$expr"
         return
         ;;
       *)
@@ -191,17 +193,17 @@ manage_cron() {
         pause
         ;;
       2)
-        expr="$(build_cron_expr)"
-        if [ -n "$expr" ]; then
-          install_cron_job "$expr"
+        build_cron_expr
+        if [ -n "$CRON_EXPR" ]; then
+          install_cron_job "$CRON_EXPR"
           echo "定时任务已添加。"
         fi
         pause
         ;;
       3)
-        expr="$(build_cron_expr)"
-        if [ -n "$expr" ]; then
-          install_cron_job "$expr"
+        build_cron_expr
+        if [ -n "$CRON_EXPR" ]; then
+          install_cron_job "$CRON_EXPR"
           echo "定时任务已修改。"
         fi
         pause
@@ -248,7 +250,7 @@ modify_config() {
         webdav_path=$(read_with_default "远端路径" "${WEBDAV_PATH:-$DEFAULT_REMOTE_PATH}")
         server_id=$(read_required "SERVER_ID")
         backup_sources=$(read_required "备份内容路径")
-        exclude_patterns=$(read_optional_singleline "排除规则，多个请自行写成换行转义或简洁模式")
+        exclude_patterns=$(read_optional_singleline "排除规则，多个请用空格或后续手改 env")
         mkdir -p "$INSTALL_DIR"
         if [ ! -f "$BACKUP_SCRIPT_PATH" ]; then
           download_files
@@ -271,7 +273,7 @@ modify_config() {
 }
 
 install_flow() {
-  local install_dir webdav_domain webdav_username webdav_password webdav_path server_id backup_sources exclude_patterns install_cron expr
+  local install_dir webdav_domain webdav_username webdav_password webdav_path server_id backup_sources exclude_patterns install_cron
   install_dir=$(read_with_default "安装目录" "$DEFAULT_INSTALL_DIR")
   setup_paths "$install_dir"
   webdav_domain=$(read_required "WebDAV 域名")
@@ -286,9 +288,9 @@ install_flow() {
   download_files
   write_env "$webdav_domain" "$webdav_username" "$webdav_password" "$webdav_path" "$server_id" "$backup_sources" "$exclude_patterns"
   if [[ "${install_cron:-Y}" =~ ^([Yy]|)$ ]]; then
-    expr="$(build_cron_expr)"
-    if [ -n "$expr" ]; then
-      install_cron_job "$expr"
+    build_cron_expr
+    if [ -n "$CRON_EXPR" ]; then
+      install_cron_job "$CRON_EXPR"
     fi
   fi
   echo "安装完成。"
