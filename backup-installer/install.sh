@@ -12,22 +12,22 @@ BACKUP_SCRIPT_PATH=""
 LOG_FILE="$LOG_FILE_DEFAULT"
 
 pause() {
-  read -rp "按回车继续..." _
+  read -r -p "按回车继续..." _
 }
 
-prompt_default() {
-  local label="$1"
+read_with_default() {
+  local prompt="$1"
   local default_value="$2"
   local value
-  read -rp "$label [$default_value]: " value
+  read -r -p "$prompt [$default_value]: " value
   printf '%s' "${value:-$default_value}"
 }
 
-prompt_required() {
-  local label="$1"
+read_required() {
+  local prompt="$1"
   local value
   while true; do
-    read -rp "$label: " value
+    read -r -p "$prompt: " value
     if [ -n "$value" ]; then
       printf '%s' "$value"
       return
@@ -36,21 +36,11 @@ prompt_required() {
   done
 }
 
-prompt_optional_multiline() {
-  local label="$1"
-  echo "$label（直接回车跳过，结束请输入单独一行 END）:"
-  local first line out=""
-  read -r first || true
-  [ -z "$first" ] && return 0
-  if [ "$first" != "END" ]; then
-    out="$first"
-  fi
-  while true; do
-    read -r line || true
-    [ "$line" = "END" ] && break
-    out+=$'\n'"$line"
-  done
-  printf '%s' "$out"
+read_optional_singleline() {
+  local prompt="$1"
+  local value
+  read -r -p "$prompt（回车跳过）: " value
+  printf '%s' "$value"
 }
 
 ensure_root() {
@@ -115,18 +105,18 @@ build_cron_expr() {
     echo "2) 每 x 小时"
     echo "3) 自定义 cron 表达式"
     echo "0) 跳过"
-    read -rp "输入选项: " cron_choice
+    read -r -p "输入选项: " cron_choice
     case "$cron_choice" in
       1)
-        hour=$(prompt_required "请输入小时（0-23）")
+        hour=$(read_required "请输入小时（0-23）")
         expr="0 ${hour} * * *"
         ;;
       2)
-        hours=$(prompt_required "请输入间隔小时数")
+        hours=$(read_required "请输入间隔小时数")
         expr="0 */${hours} * * *"
         ;;
       3)
-        expr=$(prompt_required "请输入 cron 表达式")
+        expr=$(read_required "请输入 cron 表达式")
         ;;
       0)
         printf ''
@@ -140,7 +130,7 @@ build_cron_expr() {
 
     echo "生成的定时任务表达式为："
     echo "$expr"
-    read -rp "是否确认使用这个表达式？ [Y/n]: " confirm
+    read -r -p "是否确认使用这个表达式？ [Y/n]: " confirm
     case "${confirm:-Y}" in
       Y|y|"")
         printf '%s' "$expr"
@@ -164,7 +154,6 @@ install_cron_job() {
 show_config() {
   if [ ! -f "$BACKUP_ENV_PATH" ]; then
     echo "未找到配置文件：$BACKUP_ENV_PATH"
-    pause
     return
   fi
   # shellcheck disable=SC1090
@@ -187,48 +176,6 @@ show_config() {
   fi
 }
 
-modify_config() {
-  while true; do
-    show_config
-    echo
-    echo "1) 修改配置"
-    echo "2) 管理定时任务"
-    echo "0) 返回"
-    read -rp "输入选项: " sub
-    case "$sub" in
-      1)
-        # shellcheck disable=SC1090
-        source "$BACKUP_ENV_PATH"
-        install_dir=$(prompt_default "安装目录" "$INSTALL_DIR")
-        setup_paths "$install_dir"
-        webdav_domain=$(prompt_required "WebDAV 域名")
-        webdav_username=$(prompt_required "WebDAV 用户名")
-        webdav_password=$(prompt_required "WebDAV 密码")
-        webdav_path=$(prompt_default "远端路径" "${WEBDAV_PATH:-$DEFAULT_REMOTE_PATH}")
-        server_id=$(prompt_required "SERVER_ID")
-        backup_sources=$(prompt_required "备份内容路径")
-        exclude_patterns=$(prompt_optional_multiline "排除规则")
-        mkdir -p "$INSTALL_DIR"
-        if [ ! -f "$BACKUP_SCRIPT_PATH" ]; then
-          download_files
-        fi
-        write_env "$webdav_domain" "$webdav_username" "$webdav_password" "$webdav_path" "$server_id" "$backup_sources" "$exclude_patterns"
-        echo "配置已更新。"
-        pause
-        ;;
-      2)
-        manage_cron
-        ;;
-      0)
-        return
-        ;;
-      *)
-        echo "无效选项"
-        ;;
-    esac
-  done
-}
-
 manage_cron() {
   while true; do
     echo "定时任务管理："
@@ -237,7 +184,7 @@ manage_cron() {
     echo "3) 修改定时任务"
     echo "4) 删除定时任务"
     echo "0) 返回"
-    read -rp "输入选项: " sub
+    read -r -p "输入选项: " sub
     case "$sub" in
       1)
         crontab -l 2>/dev/null | grep -F "$BACKUP_SCRIPT_PATH" || echo "未找到相关定时任务"
@@ -276,18 +223,65 @@ manage_cron() {
   done
 }
 
+modify_config() {
+  while true; do
+    show_config
+    echo
+    echo "1) 修改配置"
+    echo "2) 管理定时任务"
+    echo "0) 返回"
+    read -r -p "输入选项: " sub
+    case "$sub" in
+      1)
+        if [ ! -f "$BACKUP_ENV_PATH" ]; then
+          echo "未找到配置文件。"
+          pause
+          continue
+        fi
+        # shellcheck disable=SC1090
+        source "$BACKUP_ENV_PATH"
+        install_dir=$(read_with_default "安装目录" "$INSTALL_DIR")
+        setup_paths "$install_dir"
+        webdav_domain=$(read_required "WebDAV 域名")
+        webdav_username=$(read_required "WebDAV 用户名")
+        webdav_password=$(read_required "WebDAV 密码")
+        webdav_path=$(read_with_default "远端路径" "${WEBDAV_PATH:-$DEFAULT_REMOTE_PATH}")
+        server_id=$(read_required "SERVER_ID")
+        backup_sources=$(read_required "备份内容路径")
+        exclude_patterns=$(read_optional_singleline "排除规则，多个请自行写成换行转义或简洁模式")
+        mkdir -p "$INSTALL_DIR"
+        if [ ! -f "$BACKUP_SCRIPT_PATH" ]; then
+          download_files
+        fi
+        write_env "$webdav_domain" "$webdav_username" "$webdav_password" "$webdav_path" "$server_id" "$backup_sources" "$exclude_patterns"
+        echo "配置已更新。"
+        pause
+        ;;
+      2)
+        manage_cron
+        ;;
+      0)
+        return
+        ;;
+      *)
+        echo "无效选项"
+        ;;
+    esac
+  done
+}
+
 install_flow() {
   local install_dir webdav_domain webdav_username webdav_password webdav_path server_id backup_sources exclude_patterns install_cron expr
-  install_dir=$(prompt_default "安装目录" "$DEFAULT_INSTALL_DIR")
+  install_dir=$(read_with_default "安装目录" "$DEFAULT_INSTALL_DIR")
   setup_paths "$install_dir"
-  webdav_domain=$(prompt_required "WebDAV 域名")
-  webdav_username=$(prompt_required "WebDAV 用户名")
-  webdav_password=$(prompt_required "WebDAV 密码")
-  webdav_path=$(prompt_default "远端路径" "$DEFAULT_REMOTE_PATH")
-  server_id=$(prompt_required "SERVER_ID")
-  backup_sources=$(prompt_required "备份内容路径")
-  exclude_patterns=$(prompt_optional_multiline "排除规则")
-  read -rp "是否安装 cron（定时任务）？ [Y/n]: " install_cron
+  webdav_domain=$(read_required "WebDAV 域名")
+  webdav_username=$(read_required "WebDAV 用户名")
+  webdav_password=$(read_required "WebDAV 密码")
+  webdav_path=$(read_with_default "远端路径" "$DEFAULT_REMOTE_PATH")
+  server_id=$(read_required "SERVER_ID")
+  backup_sources=$(read_required "备份内容路径")
+  exclude_patterns=$(read_optional_singleline "排除规则，多个请用空格或后续手改 env")
+  read -r -p "是否安装 cron（定时任务）？ [Y/n]: " install_cron
   mkdir -p "$INSTALL_DIR"
   download_files
   write_env "$webdav_domain" "$webdav_username" "$webdav_password" "$webdav_path" "$server_id" "$backup_sources" "$exclude_patterns"
@@ -302,9 +296,9 @@ install_flow() {
 }
 
 upgrade_flow() {
-  install_dir=$(prompt_default "安装目录" "$DEFAULT_INSTALL_DIR")
+  install_dir=$(read_with_default "安装目录" "$DEFAULT_INSTALL_DIR")
   setup_paths "$install_dir"
-  read -rp "将升级脚本，保留现有配置和定时任务，是否继续？ [Y/n]: " confirm
+  read -r -p "将升级脚本，保留现有配置和定时任务，是否继续？ [Y/n]: " confirm
   case "${confirm:-Y}" in
     Y|y|"")
       mkdir -p "$INSTALL_DIR"
@@ -319,9 +313,9 @@ upgrade_flow() {
 }
 
 uninstall_flow() {
-  install_dir=$(prompt_default "安装目录" "$DEFAULT_INSTALL_DIR")
+  install_dir=$(read_with_default "安装目录" "$DEFAULT_INSTALL_DIR")
   setup_paths "$install_dir"
-  read -rp "这会删除所有脚本、配置和定时任务。如果存在日志，也会先打包带走再卸载。是否确认继续？ [y/N]: " confirm
+  read -r -p "这会删除所有脚本、配置和定时任务。如果存在日志，也会先打包带走再卸载。是否确认继续？ [y/N]: " confirm
   case "$confirm" in
     y|Y)
       if [ -f "$LOG_FILE" ]; then
@@ -359,18 +353,18 @@ main_menu() {
     echo "4) 查看/修改配置"
     echo "5) 查看日志"
     echo "0) 退出"
-    read -rp "输入选项: " choice
+    read -r -p "输入选项: " choice
     case "$choice" in
       1) install_flow ;;
       2) upgrade_flow ;;
       3) uninstall_flow ;;
       4)
-        install_dir=$(prompt_default "安装目录" "$DEFAULT_INSTALL_DIR")
+        install_dir=$(read_with_default "安装目录" "$DEFAULT_INSTALL_DIR")
         setup_paths "$install_dir"
         modify_config
         ;;
       5)
-        install_dir=$(prompt_default "安装目录" "$DEFAULT_INSTALL_DIR")
+        install_dir=$(read_with_default "安装目录" "$DEFAULT_INSTALL_DIR")
         setup_paths "$install_dir"
         view_logs
         ;;
