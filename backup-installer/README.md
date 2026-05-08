@@ -5,7 +5,7 @@
 ## 一键运行
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fox-baixi/linux/main/backup-installer/install.sh | bash
+bash <(curl -sSL https://raw.githubusercontent.com/fox-baixi/linux/main/backup-installer/install.sh)
 ```
 
 ## 功能
@@ -23,6 +23,7 @@ curl -fsSL https://raw.githubusercontent.com/fox-baixi/linux/main/backup-install
 
 - `/root/back/backup.sh`
 - `/root/back/backup.env`
+- `/root/back/backup.env.example`
 
 ## 依赖
 
