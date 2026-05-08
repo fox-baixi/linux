@@ -367,6 +367,32 @@ upgrade_flow() {
   pause
 }
 
+run_once_flow() {
+  if ! resolve_existing_install_dir; then
+    echo "默认安装目录 ${DEFAULT_INSTALL_DIR} 未找到配置。"
+    printf "是否输入其他安装目录？ [Y/n]: "
+    IFS= read -r change_dir
+    case "${change_dir:-Y}" in
+      Y|y|"")
+        prompt_default_into INSTALL_DIR "安装目录" "$DEFAULT_INSTALL_DIR"
+        set_paths "$INSTALL_DIR"
+        ;;
+      *)
+        return
+        ;;
+    esac
+  fi
+  ensure_runtime_dependencies
+  if [ ! -f "$BACKUP_SCRIPT_PATH" ]; then
+    echo "未找到备份脚本：$BACKUP_SCRIPT_PATH"
+    pause
+    return
+  fi
+  echo "开始执行一次备份..."
+  bash "$BACKUP_SCRIPT_PATH"
+  pause
+}
+
 uninstall_flow() {
   if ! resolve_existing_install_dir; then
     prompt_default_into INSTALL_DIR "安装目录" "$DEFAULT_INSTALL_DIR"
@@ -422,18 +448,20 @@ main_menu() {
     echo "请选择操作："
     echo "1) 安装"
     echo "2) 升级"
-    echo "3) 卸载"
-    echo "4) 查看/修改配置"
-    echo "5) 查看日志"
+    echo "3) 执行一次"
+    echo "4) 卸载"
+    echo "5) 查看/修改配置"
+    echo "6) 查看日志"
     echo "0) 退出"
     printf "输入选项: "
     IFS= read -r choice
     case "$choice" in
       1) install_flow ;;
       2) upgrade_flow ;;
-      3) uninstall_flow ;;
-      4) modify_config_flow ;;
-      5) view_logs ;;
+      3) run_once_flow ;;
+      4) uninstall_flow ;;
+      5) modify_config_flow ;;
+      6) view_logs ;;
       0) exit 0 ;;
       *) echo "无效选项"; pause ;;
     esac

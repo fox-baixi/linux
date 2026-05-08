@@ -12,6 +12,7 @@ bash <(curl -sSL https://raw.githubusercontent.com/fox-baixi/linux/main/backup-i
 
 - 安装备份脚本
 - 升级脚本
+- 执行一次备份
 - 卸载脚本 / 配置 / 定时任务
 - 查看和修改配置
 - 管理 cron 定时任务
@@ -32,4 +33,4 @@ bash <(curl -sSL https://raw.githubusercontent.com/fox-baixi/linux/main/backup-i
 - tar
 - rclone
 
-安装器会检查 `curl`，但 `rclone` 需要在实际执行备份时存在。
+安装器会在安装、升级、执行一次备份前检查运行依赖。
