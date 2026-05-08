@@ -68,13 +68,19 @@ ensure_root() {
   fi
 }
 
-ensure_dependency() {
+install_dependency_if_missing() {
   local cmd="$1"
   local pkg="$2"
   if ! command -v "$cmd" >/dev/null 2>&1; then
-    echo "缺少依赖: $cmd，尝试安装 $pkg"
+    echo "缺少依赖: $cmd，正在安装 $pkg"
     apt-get update && apt-get install -y "$pkg"
   fi
+}
+
+ensure_runtime_dependencies() {
+  install_dependency_if_missing curl curl
+  install_dependency_if_missing tar tar
+  install_dependency_if_missing rclone rclone
 }
 
 download_files() {
@@ -197,6 +203,14 @@ show_config() {
   return 0
 }
 
+resolve_existing_install_dir() {
+  if [ -f "${DEFAULT_INSTALL_DIR}/backup.env" ]; then
+    set_paths "$DEFAULT_INSTALL_DIR"
+    return 0
+  fi
+  return 1
+}
+
 manage_cron() {
   while true; do
     echo
@@ -248,10 +262,26 @@ manage_cron() {
 
 modify_config_flow() {
   local current_install_dir webdav_domain webdav_username webdav_password webdav_path server_id backup_sources exclude_patterns
+  if ! resolve_existing_install_dir; then
+    echo "默认安装目录 ${DEFAULT_INSTALL_DIR} 未找到配置。"
+    printf "是否输入其他安装目录？ [Y/n]: "
+    IFS= read -r change_dir
+    case "${change_dir:-Y}" in
+      Y|y|"")
+        prompt_default_into current_install_dir "安装目录" "$DEFAULT_INSTALL_DIR"
+        set_paths "$current_install_dir"
+        ;;
+      *)
+        return
+        ;;
+    esac
+  fi
+
   if ! show_config; then
     pause
     return
   fi
+
   echo
   echo "1) 修改配置"
   echo "2) 管理定时任务"
@@ -294,8 +324,8 @@ modify_config_flow() {
 }
 
 install_flow() {
-  local install_cron
   local webdav_domain webdav_username webdav_password webdav_path server_id backup_sources exclude_patterns
+  ensure_runtime_dependencies
   echo
   echo "开始安装引导"
   prompt_default_into INSTALL_DIR "安装目录" "$DEFAULT_INSTALL_DIR"
@@ -307,13 +337,7 @@ install_flow() {
   prompt_required_into server_id "SERVER_ID"
   prompt_required_into backup_sources "备份内容路径"
   prompt_optional_into exclude_patterns "排除规则，多个请用空格或后续手改 env"
-  printf "是否安装 cron（定时任务）？ [Y/n]: "
-  IFS= read -r install_cron
-  if [[ "${install_cron:-Y}" =~ ^([Yy]|)$ ]]; then
-    build_cron_expr_interactive
-  else
-    CRON_EXPR=""
-  fi
+  build_cron_expr_interactive
   mkdir -p "$INSTALL_DIR"
   download_files
   write_env "$webdav_domain" "$webdav_username" "$webdav_password" "$webdav_path" "$server_id" "$backup_sources" "$exclude_patterns"
@@ -331,6 +355,7 @@ upgrade_flow() {
   IFS= read -r confirm
   case "${confirm:-Y}" in
     Y|y|"")
+      ensure_runtime_dependencies
       mkdir -p "$INSTALL_DIR"
       download_files
       echo "升级完成。"
@@ -343,8 +368,10 @@ upgrade_flow() {
 }
 
 uninstall_flow() {
-  prompt_default_into INSTALL_DIR "安装目录" "$DEFAULT_INSTALL_DIR"
-  set_paths "$INSTALL_DIR"
+  if ! resolve_existing_install_dir; then
+    prompt_default_into INSTALL_DIR "安装目录" "$DEFAULT_INSTALL_DIR"
+    set_paths "$INSTALL_DIR"
+  fi
   printf "这会删除所有脚本、配置和定时任务。如果存在日志，也会先打包带走再卸载。是否确认继续？ [y/N]: "
   IFS= read -r confirm
   case "$confirm" in
@@ -357,17 +384,30 @@ uninstall_flow() {
       printf '%s\n' "$current" | crontab -
       rm -f "$BACKUP_SCRIPT_PATH" "$BACKUP_ENV_PATH" "${INSTALL_DIR}/backup.env.example"
       echo "卸载完成。"
+      pause
       ;;
     *)
       echo "已取消。"
+      pause
       ;;
   esac
-  pause
 }
 
 view_logs() {
-  prompt_default_into INSTALL_DIR "安装目录" "$DEFAULT_INSTALL_DIR"
-  set_paths "$INSTALL_DIR"
+  if ! resolve_existing_install_dir; then
+    echo "默认安装目录 ${DEFAULT_INSTALL_DIR} 未找到配置。"
+    printf "是否输入其他安装目录？ [Y/n]: "
+    IFS= read -r change_dir
+    case "${change_dir:-Y}" in
+      Y|y|"")
+        prompt_default_into INSTALL_DIR "安装目录" "$DEFAULT_INSTALL_DIR"
+        set_paths "$INSTALL_DIR"
+        ;;
+      *)
+        return
+        ;;
+    esac
+  fi
   if [ -f "$LOG_FILE" ]; then
     cat "$LOG_FILE"
   else
@@ -392,14 +432,8 @@ main_menu() {
       1) install_flow ;;
       2) upgrade_flow ;;
       3) uninstall_flow ;;
-      4)
-        prompt_default_into INSTALL_DIR "安装目录" "$DEFAULT_INSTALL_DIR"
-        set_paths "$INSTALL_DIR"
-        modify_config_flow
-        ;;
-      5)
-        view_logs
-        ;;
+      4) modify_config_flow ;;
+      5) view_logs ;;
       0) exit 0 ;;
       *) echo "无效选项"; pause ;;
     esac
@@ -407,5 +441,4 @@ main_menu() {
 }
 
 ensure_root
-ensure_dependency curl curl
 main_menu
