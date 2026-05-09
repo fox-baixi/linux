@@ -117,6 +117,10 @@ EOF
   fi
 }
 
+get_current_cron_line() {
+  crontab -l 2>/dev/null | grep -F "$BACKUP_SCRIPT_PATH" || true
+}
+
 build_cron_expr_interactive() {
   CRON_EXPR=""
   local cron_choice hour hours expr confirm
@@ -177,6 +181,13 @@ install_cron_job() {
   printf '%s\n%s %s\n' "$current" "$expr" "$cmd" | sed '/^$/N;/^\n$/D' | crontab -
 }
 
+remove_cron_job() {
+  local current
+  current="$(crontab -l 2>/dev/null || true)"
+  current="$(printf '%s\n' "$current" | grep -Fv "$BACKUP_SCRIPT_PATH" || true)"
+  printf '%s\n' "$current" | crontab -
+}
+
 show_config() {
   if [ ! -f "$BACKUP_ENV_PATH" ]; then
     echo "未找到配置文件：$BACKUP_ENV_PATH"
@@ -185,21 +196,23 @@ show_config() {
   # shellcheck disable=SC1090
   source "$BACKUP_ENV_PATH"
   local cron_line
-  cron_line="$(crontab -l 2>/dev/null | grep -F "$BACKUP_SCRIPT_PATH" || true)"
+  cron_line="$(get_current_cron_line)"
   echo "当前配置："
   echo "安装目录：$INSTALL_DIR"
-  echo "WebDAV 域名：${WEBDAV_DOMAIN:-}"
-  echo "WebDAV 用户名：${WEBDAV_USERNAME:-}"
-  echo "WebDAV 密码：********"
-  echo "远端路径：${WEBDAV_PATH:-}"
-  echo "服务器标识：${SERVER_ID:-}"
-  echo "备份内容路径：${BACKUP_SOURCES:-}"
-  echo "排除规则：${EXCLUDE_PATTERNS:-无}"
+  echo
+  echo "1) WebDAV 域名: ${WEBDAV_DOMAIN:-}"
+  echo "2) WebDAV 用户名: ${WEBDAV_USERNAME:-}"
+  echo "3) WebDAV 密码: ********"
+  echo "4) 远端路径: ${WEBDAV_PATH:-}"
+  echo "5) 服务器标识: ${SERVER_ID:-}"
+  echo "6) 备份内容路径: ${BACKUP_SOURCES:-}"
+  echo "7) 排除规则: ${EXCLUDE_PATTERNS:-无}"
   if [ -n "$cron_line" ]; then
-    echo "当前定时任务：$cron_line"
+    echo "8) 定时任务: $cron_line"
   else
-    echo "当前定时任务：未安装"
+    echo "8) 定时任务: 未安装"
   fi
+  echo "0) 返回"
   return 0
 }
 
@@ -212,42 +225,73 @@ resolve_existing_install_dir() {
 }
 
 manage_cron() {
+  local cron_line hour hours expr confirm
   while true; do
+    cron_line="$(get_current_cron_line)"
     echo
-    echo "定时任务管理："
-    echo "1) 查看当前定时任务"
-    echo "2) 添加定时任务"
-    echo "3) 修改定时任务"
+    echo "当前定时任务："
+    if [ -n "$cron_line" ]; then
+      echo "$cron_line"
+    else
+      echo "未安装"
+    fi
+    echo
+    echo "1) 设置为每天 x 点"
+    echo "2) 设置为每 x 小时"
+    echo "3) 自定义 cron 表达式"
     echo "4) 删除定时任务"
     echo "0) 返回"
     printf "输入选项: "
     IFS= read -r sub
     case "$sub" in
       1)
-        crontab -l 2>/dev/null | grep -F "$BACKUP_SCRIPT_PATH" || echo "未找到相关定时任务"
+        prompt_required_into hour "请输入小时（0-23）"
+        expr="0 ${hour} * * *"
+        echo
+        echo "新的 cron 表达式："
+        echo "$expr"
+        printf "是否确认使用这个表达式？ [Y/n]: "
+        IFS= read -r confirm
+        case "${confirm:-Y}" in
+          Y|y|"") install_cron_job "$expr"; echo "定时任务已更新。" ;;
+          *) echo "已取消。" ;;
+        esac
         pause
         ;;
       2)
-        build_cron_expr_interactive
-        if [ -n "$CRON_EXPR" ]; then
-          install_cron_job "$CRON_EXPR"
-          echo "定时任务已添加。"
-        fi
+        prompt_required_into hours "请输入间隔小时数"
+        expr="0 */${hours} * * *"
+        echo
+        echo "新的 cron 表达式："
+        echo "$expr"
+        printf "是否确认使用这个表达式？ [Y/n]: "
+        IFS= read -r confirm
+        case "${confirm:-Y}" in
+          Y|y|"") install_cron_job "$expr"; echo "定时任务已更新。" ;;
+          *) echo "已取消。" ;;
+        esac
         pause
         ;;
       3)
-        build_cron_expr_interactive
-        if [ -n "$CRON_EXPR" ]; then
-          install_cron_job "$CRON_EXPR"
-          echo "定时任务已修改。"
-        fi
+        prompt_required_into expr "请输入新的 cron 表达式"
+        echo
+        echo "新的 cron 表达式："
+        echo "$expr"
+        printf "是否确认使用这个表达式？ [Y/n]: "
+        IFS= read -r confirm
+        case "${confirm:-Y}" in
+          Y|y|"") install_cron_job "$expr"; echo "定时任务已更新。" ;;
+          *) echo "已取消。" ;;
+        esac
         pause
         ;;
       4)
-        current="$(crontab -l 2>/dev/null || true)"
-        current="$(printf '%s\n' "$current" | grep -Fv "$BACKUP_SCRIPT_PATH" || true)"
-        printf '%s\n' "$current" | crontab -
-        echo "定时任务已删除。"
+        printf "是否确认删除当前定时任务？ [y/N]: "
+        IFS= read -r confirm
+        case "$confirm" in
+          y|Y) remove_cron_job; echo "定时任务已删除。" ;;
+          *) echo "已取消。" ;;
+        esac
         pause
         ;;
       0)
@@ -261,15 +305,15 @@ manage_cron() {
 }
 
 modify_config_flow() {
-  local current_install_dir webdav_domain webdav_username webdav_password webdav_path server_id backup_sources exclude_patterns
+  local webdav_domain webdav_username webdav_password webdav_path server_id backup_sources exclude_patterns current_val
   if ! resolve_existing_install_dir; then
     echo "默认安装目录 ${DEFAULT_INSTALL_DIR} 未找到配置。"
     printf "是否输入其他安装目录？ [Y/n]: "
     IFS= read -r change_dir
     case "${change_dir:-Y}" in
       Y|y|"")
-        prompt_default_into current_install_dir "安装目录" "$DEFAULT_INSTALL_DIR"
-        set_paths "$current_install_dir"
+        prompt_default_into INSTALL_DIR "安装目录" "$DEFAULT_INSTALL_DIR"
+        set_paths "$INSTALL_DIR"
         ;;
       *)
         return
@@ -282,35 +326,84 @@ modify_config_flow() {
     return
   fi
 
-  echo
-  echo "1) 修改配置"
-  echo "2) 管理定时任务"
-  echo "0) 返回"
   printf "输入选项: "
   IFS= read -r sub
+  # shellcheck disable=SC1090
+  source "$BACKUP_ENV_PATH"
   case "$sub" in
     1)
-      # shellcheck disable=SC1090
-      source "$BACKUP_ENV_PATH"
-      current_install_dir="$INSTALL_DIR"
-      prompt_default_into current_install_dir "安装目录" "$current_install_dir"
-      set_paths "$current_install_dir"
-      prompt_required_into webdav_domain "WebDAV 域名（必须以 https:// 开头，结尾不要带 /）"
-      prompt_required_into webdav_username "WebDAV 用户名"
-      prompt_required_into webdav_password "WebDAV 密码"
-      prompt_default_into webdav_path "远端路径" "${WEBDAV_PATH:-$DEFAULT_REMOTE_PATH}"
-      prompt_required_into server_id "服务器标识（例如 tz、cs）"
-      prompt_required_into backup_sources "备份内容路径"
-      prompt_optional_into exclude_patterns "排除规则，多个请用空格或后续手改 env"
-      mkdir -p "$INSTALL_DIR"
-      if [ ! -f "$BACKUP_SCRIPT_PATH" ]; then
-        download_files
-      fi
-      write_env "$webdav_domain" "$webdav_username" "$webdav_password" "$webdav_path" "$server_id" "$backup_sources" "$exclude_patterns"
-      echo "配置已更新。"
+      echo
+      echo "当前 WebDAV 域名："
+      echo "$WEBDAV_DOMAIN"
+      echo
+      prompt_required_into webdav_domain "请输入新的 WebDAV 域名（必须以 https:// 开头，结尾不要带 /）"
+      write_env "$webdav_domain" "$WEBDAV_USERNAME" "$WEBDAV_PASSWORD" "$WEBDAV_PATH" "$SERVER_ID" "$BACKUP_SOURCES" "${EXCLUDE_PATTERNS:-}"
+      echo "已更新。"
       pause
       ;;
     2)
+      echo
+      echo "当前 WebDAV 用户名："
+      echo "$WEBDAV_USERNAME"
+      echo
+      prompt_required_into webdav_username "请输入新的 WebDAV 用户名"
+      write_env "$WEBDAV_DOMAIN" "$webdav_username" "$WEBDAV_PASSWORD" "$WEBDAV_PATH" "$SERVER_ID" "$BACKUP_SOURCES" "${EXCLUDE_PATTERNS:-}"
+      echo "已更新。"
+      pause
+      ;;
+    3)
+      echo
+      echo "当前 WebDAV 密码："
+      echo '********'
+      echo
+      prompt_required_into webdav_password "请输入新的 WebDAV 密码"
+      write_env "$WEBDAV_DOMAIN" "$WEBDAV_USERNAME" "$webdav_password" "$WEBDAV_PATH" "$SERVER_ID" "$BACKUP_SOURCES" "${EXCLUDE_PATTERNS:-}"
+      echo "已更新。"
+      pause
+      ;;
+    4)
+      echo
+      echo "当前远端路径："
+      echo "$WEBDAV_PATH"
+      echo
+      prompt_required_into webdav_path "请输入新的远端路径"
+      write_env "$WEBDAV_DOMAIN" "$WEBDAV_USERNAME" "$WEBDAV_PASSWORD" "$webdav_path" "$SERVER_ID" "$BACKUP_SOURCES" "${EXCLUDE_PATTERNS:-}"
+      echo "已更新。"
+      pause
+      ;;
+    5)
+      echo
+      echo "当前服务器标识："
+      echo "$SERVER_ID"
+      echo
+      prompt_required_into server_id "请输入新的服务器标识"
+      write_env "$WEBDAV_DOMAIN" "$WEBDAV_USERNAME" "$WEBDAV_PASSWORD" "$WEBDAV_PATH" "$server_id" "$BACKUP_SOURCES" "${EXCLUDE_PATTERNS:-}"
+      echo "已更新。"
+      pause
+      ;;
+    6)
+      echo
+      echo "当前备份内容路径："
+      echo "$BACKUP_SOURCES"
+      echo
+      echo "支持多个，空格分隔。"
+      prompt_required_into backup_sources "请输入新的备份内容路径"
+      write_env "$WEBDAV_DOMAIN" "$WEBDAV_USERNAME" "$WEBDAV_PASSWORD" "$WEBDAV_PATH" "$SERVER_ID" "$backup_sources" "${EXCLUDE_PATTERNS:-}"
+      echo "已更新。"
+      pause
+      ;;
+    7)
+      echo
+      echo "当前排除规则："
+      echo "${EXCLUDE_PATTERNS:-无}"
+      echo
+      echo "多个请用空格分隔。"
+      prompt_optional_into exclude_patterns "请输入新的排除规则"
+      write_env "$WEBDAV_DOMAIN" "$WEBDAV_USERNAME" "$WEBDAV_PASSWORD" "$WEBDAV_PATH" "$SERVER_ID" "$BACKUP_SOURCES" "$exclude_patterns"
+      echo "已更新。"
+      pause
+      ;;
+    8)
       manage_cron
       ;;
     0)
@@ -405,9 +498,7 @@ uninstall_flow() {
       if [ -f "$LOG_FILE" ]; then
         tar -czf "/tmp/backup-logs-$(date +%F-%H-%M-%S).tar.gz" "$LOG_FILE" || true
       fi
-      current="$(crontab -l 2>/dev/null || true)"
-      current="$(printf '%s\n' "$current" | grep -Fv "$BACKUP_SCRIPT_PATH" || true)"
-      printf '%s\n' "$current" | crontab -
+      remove_cron_job
       rm -f "$BACKUP_SCRIPT_PATH" "$BACKUP_ENV_PATH" "${INSTALL_DIR}/backup.env.example"
       echo "卸载完成。"
       pause
