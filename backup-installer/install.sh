@@ -2,7 +2,7 @@
 set -euo pipefail
 
 DEFAULT_INSTALL_DIR="/root/back"
-DEFAULT_REMOTE_PATH="OneDrive/Backup/vps_docker"
+DEFAULT_REMOTE_PATH="OneDrive/Backup/vps"
 SCRIPT_SOURCE_BASE="https://raw.githubusercontent.com/fox-baixi/linux/main/backup-installer"
 LOG_FILE_DEFAULT="/var/log/backup.log"
 
