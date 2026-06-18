@@ -52,7 +52,7 @@ warp_choice=${warp_choice:-$warp_default}
 # 1. 工具
 echo -e "\n${INFO}1. 基础工具安装${RESET}"
 echo -e "${OPT}1. 精简版 (sudo) (默认)${RESET}"
-echo -e "${OPT}2. 基础版 (git, nano, unzip, tar, sudo)${RESET}"
+echo -e "${OPT}2. 基础版 (git, nano, zip, unzip, tar, sudo)${RESET}"
 read -p "$(echo -e ${INPUT}请选择: ${RESET})" tool_p
 tool_p=${tool_p:-1}
 
