@@ -13,10 +13,14 @@ cpu_cores=$(nproc)
 cpu_model=$(grep "model name" /proc/cpuinfo | head -1 | cut -d ":" -f2)
 disk_total=$(df -m / | awk 'NR==2 {print $2}')
 
-# IPv4 / IPv6 双栈连通性检测
+# IPv4 / IPv6 双栈连通性检测 (ping + curl 双重检测保障准确性)
 has_v4=0; has_v6=0
-curl -s4m2 1.1.1.1 > /dev/null 2>&1 && has_v4=1
-curl -s6m2 2606:4700:4700::1111 > /dev/null 2>&1 && has_v6=1
+if ping -4 -c 1 -W 2 1.1.1.1 > /dev/null 2>&1 || curl -s4m2 https://1.1.1.1 > /dev/null 2>&1; then
+    has_v4=1
+fi
+if ping -6 -c 1 -W 2 2606:4700:4700::1111 > /dev/null 2>&1 || curl -s6m2 "https://[2606:4700:4700::1111]" > /dev/null 2>&1 || curl -s6m2 https://v6.ident.me > /dev/null 2>&1; then
+    has_v6=1
+fi
 
 if [ $has_v4 -eq 1 ] && [ $has_v6 -eq 1 ]; then
     net_status="双栈正常 (IPv4+IPv6)"
@@ -129,6 +133,15 @@ apt update && apt upgrade -y
 if [ "$warp_choice" == "1" ]; then
     wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh && bash menu.sh
     R_WARP="已安装"
+
+    # 原始仅有 IPv4 时，调低 IPv6 优先级 (IPv4 优先)
+    if [ $has_v4 -eq 1 ] && [ $has_v6 -eq 0 ]; then
+        if [ -f /etc/gai.conf ]; then
+            sed -i 's/^#precedence ::ffff:0:0\/96  100/precedence ::ffff:0:0\/96  100/' /etc/gai.conf
+        fi
+        grep -q "precedence ::ffff:0:0/96  100" /etc/gai.conf 2>/dev/null || echo "precedence ::ffff:0:0/96  100" >> /etc/gai.conf
+        R_WARP="已安装 (IPv4 优先)"
+    fi
 fi
 
 # 工具
