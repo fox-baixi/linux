@@ -11,29 +11,43 @@ RESET='\033[0m'      # 重置
 mem_total=$(free -m | awk '/Mem:/ {print $2}')
 cpu_cores=$(nproc)
 cpu_model=$(grep "model name" /proc/cpuinfo | head -1 | cut -d ":" -f2)
+disk_total=$(df -m / | awk 'NR==2 {print $2}')
 
-if curl -s4m2 1.1.1.1 > /dev/null 2>&1; then
-    ipv4_status="已有 IPv4"; warp_default="2"
+# IPv4 / IPv6 双栈连通性检测
+has_v4=0; has_v6=0
+curl -s4m2 1.1.1.1 > /dev/null 2>&1 && has_v4=1
+curl -s6m2 2606:4700:4700::1111 > /dev/null 2>&1 && has_v6=1
+
+if [ $has_v4 -eq 1 ] && [ $has_v6 -eq 1 ]; then
+    net_status="双栈正常 (IPv4+IPv6)"
+    warp_default="2"  # 双栈正常默认跳过
+elif [ $has_v4 -eq 1 ]; then
+    net_status="仅 IPv4"
+    warp_default="1"
+elif [ $has_v6 -eq 1 ]; then
+    net_status="仅 IPv6"
+    warp_default="1"
 else
-    ipv4_status="无 IPv4"; warp_default="1"
+    net_status="无外网连接"
+    warp_default="1"
 fi
 
+# CPU 压缩算法推荐
 if [ "$cpu_cores" -ge 2 ] || [[ "$cpu_model" =~ "E3"|"E5"|"Xeon"|"Intel"|"AMD" ]]; then
     default_algo="zstd"; algo_idx="2"
 else
     default_algo="lz4"; algo_idx="1"
 fi
 
-# ZRAM 大小阶梯算法 (512MB 对齐)
-if [ "$mem_total" -lt 1024 ]; then
-    calc=$(( mem_total * 2 ))
-elif [ "$mem_total" -lt 2048 ]; then
-    calc=2048
+# ZRAM 大小阶梯算法 (兼容标称 512M/1G/2G 实际内存偏小的情况)
+# 标称 512M 实际约为 450~490M；标称 2G 实际约为 1850~1980M
+if [ "$cpu_cores" -ge 2 ] && [ "$mem_total" -ge 1800 ]; then
+    auto_zram_s=4096
+elif [ "$mem_total" -le 600 ]; then
+    auto_zram_s=1024
 else
-    calc=$mem_total
+    auto_zram_s=2048
 fi
-[ $calc -gt 4096 ] && calc=4096
-auto_zram_s=$(( (calc + 256) / 512 * 512 ))
 
 # --- 2. 交互布局 ---
 
@@ -43,7 +57,7 @@ echo -e "       Debian 系统初始化脚本"
 echo -e "================================${RESET}"
 
 # 0. WARP
-echo -e "\n${INFO}0. WARP 网络扩展 (当前: $ipv4_status)${RESET}"
+echo -e "\n${INFO}0. WARP 网络扩展 (当前: $net_status)${RESET}"
 echo -e "${OPT}1. 安装 WARP$( [ "$warp_default" == "1" ] && echo " (默认)" )${RESET}"
 echo -e "${OPT}2. 跳过$( [ "$warp_default" == "2" ] && echo " (默认)" )${RESET}"
 read -p "$(echo -e ${INPUT}请选择: ${RESET})" warp_choice
@@ -51,8 +65,8 @@ warp_choice=${warp_choice:-$warp_default}
 
 # 1. 工具
 echo -e "\n${INFO}1. 基础工具安装${RESET}"
-echo -e "${OPT}1. 精简版 (sudo) (默认)${RESET}"
-echo -e "${OPT}2. 基础版 (git, nano, zip, unzip, tar, sudo)${RESET}"
+echo -e "${OPT}1. 基础版 (git, nano, zip, unzip, tar, sudo) (默认)${RESET}"
+echo -e "${OPT}2. 精简版 (sudo)${RESET}"
 read -p "$(echo -e ${INPUT}请选择: ${RESET})" tool_p
 tool_p=${tool_p:-1}
 
@@ -80,8 +94,14 @@ if [ "$zram_on" == "1" ]; then
     [ "$zram_s" -le 0 ] 2>/dev/null && zram_s=$auto_zram_s
 fi
 
-# 5. Swap
-if [ "$zram_on" == "1" ]; then auto_swap_s=1024; else
+# 5. Swap (开启内存压缩时：<=20G存储默认0，>20G默认1024MB)
+if [ "$zram_on" == "1" ]; then
+    if [ "$disk_total" -le 20480 ]; then
+        auto_swap_s=0
+    else
+        auto_swap_s=1024
+    fi
+else
     calc_swap=$mem_total; [ $calc_swap -gt 2048 ] && calc_swap=2048
     auto_swap_s=$(( (calc_swap + 256) / 512 * 512 ))
     [ $auto_swap_s -lt 512 ] && auto_swap_s=512
@@ -101,7 +121,7 @@ docker_on=${docker_on:-2}
 echo -e "\n${INFO}>> 正在全力初始化中，请稍候...${RESET}"
 
 # 初始化报告变量
-R_WARP="跳过"; R_TOOLS="精简版"; R_BBR="已开启"; R_ZRAM="未启用"; R_SWAP="未启用"; R_DOCKER="未安装"
+R_WARP="跳过"; R_TOOLS="基础版"; R_BBR="已开启"; R_ZRAM="未启用"; R_SWAP="未启用"; R_DOCKER="未安装"
 
 apt update && apt upgrade -y
 
@@ -113,10 +133,11 @@ fi
 
 # 工具
 if [ "$tool_p" == "1" ]; then
-    apt install -y sudo
-else
-    apt install -y git nano unzip tar sudo
+    apt install -y git nano zip unzip tar sudo
     R_TOOLS="基础版"
+else
+    apt install -y sudo
+    R_TOOLS="精简版"
 fi
 apt dist-upgrade -y
 
@@ -136,7 +157,7 @@ ALGO=$final_algo
 SIZE=$zram_s
 PRIORITY=100
 EOF
-    service zramswap reload
+    systemctl restart zramswap 2>/dev/null || service zramswap restart
     R_ZRAM="$final_algo / ${zram_s}MB"
 fi
 
@@ -175,6 +196,19 @@ EOF
 fi
 
 apt install chrony -y && systemctl enable --now chrony
+
+# --- ZRAM 状态健康检查与自愈 ---
+if [ "$zram_on" == "1" ]; then
+    if ! swapon --show=NAME 2>/dev/null | grep -q "zram"; then
+        systemctl restart zramswap 2>/dev/null || service zramswap restart
+        sleep 1
+    fi
+    if swapon --show=NAME 2>/dev/null | grep -q "zram"; then
+        R_ZRAM="$final_algo / ${zram_s}MB"
+    else
+        R_ZRAM="异常 (未成功挂载)"
+    fi
+fi
 
 # --- 4. 任务报告面板 ---
 clear
