@@ -6,6 +6,27 @@ WARN='\033[0;33m'    # 黄色
 ERROR='\033[1;31m'   # 红色
 RESET='\033[0m'      # 重置
 
+# 权限与 sudo 判定（root 身份绝不使用 sudo，消除 unable to resolve host 警告）
+SUDO=""
+if [ "$(id -u)" -ne 0 ]; then
+    if command -v sudo >/dev/null 2>&1; then
+        SUDO="sudo"
+    else
+        echo -e "${ERROR}[错误] 请以 root 身份运行，或安装 sudo 工具后重试！${RESET}"
+        exit 1
+    fi
+fi
+
+# 自愈修复 /etc/hosts 缺失主机名导致的解析警告
+CURRENT_HOST=$(hostname 2>/dev/null)
+if [ -n "$CURRENT_HOST" ] && ! grep -qE "(^|[[:space:]])${CURRENT_HOST}([[:space:]]|$)" /etc/hosts 2>/dev/null; then
+    if [ "$(id -u)" -eq 0 ]; then
+        echo "127.0.0.1 $CURRENT_HOST" >> /etc/hosts
+    elif [ -n "$SUDO" ]; then
+        echo "127.0.0.1 $CURRENT_HOST" | $SUDO tee -a /etc/hosts >/dev/null
+    fi
+fi
+
 GITHUB_RAW_KEY="https://raw.githubusercontent.com/fox-baixi/linux/main/ssh/target_key.pub"
 GITHUB_MIRROR_KEY="https://ghfast.top/https://raw.githubusercontent.com/fox-baixi/linux/main/ssh/target_key.pub"
 
@@ -89,12 +110,12 @@ disable_password_authentication() {
     local conf_file="/etc/ssh/sshd_config"
 
     if [ -d "$conf_d" ]; then
-        echo "PasswordAuthentication no" | sudo tee "${conf_d}/99-disable-password.conf" > /dev/null
+        echo "PasswordAuthentication no" | $SUDO tee "${conf_d}/99-disable-password.conf" > /dev/null
     elif [ -f "$conf_file" ]; then
-        if sudo grep -qE '^[[:space:]]*#?[[:space:]]*PasswordAuthentication' "$conf_file"; then
-            sudo sed -i -E 's/^[[:space:]]*#?[[:space:]]*PasswordAuthentication.*/PasswordAuthentication no/' "$conf_file"
+        if $SUDO grep -qE '^[[:space:]]*#?[[:space:]]*PasswordAuthentication' "$conf_file"; then
+            $SUDO sed -i -E 's/^[[:space:]]*#?[[:space:]]*PasswordAuthentication.*/PasswordAuthentication no/' "$conf_file"
         else
-            echo "PasswordAuthentication no" | sudo tee -a "$conf_file" > /dev/null
+            echo "PasswordAuthentication no" | $SUDO tee -a "$conf_file" > /dev/null
         fi
     fi
 }
@@ -102,14 +123,14 @@ disable_password_authentication() {
 restart_sshd() {
     echo -e "${INFO}[检查] 校验 SSH 服务配置语法...${RESET}"
     if command -v sshd >/dev/null 2>&1; then
-        if ! sudo sshd -t; then
+        if ! $SUDO sshd -t; then
             echo -e "${ERROR}[错误] sshd 配置检查未通过，取消重启服务！${RESET}"
             return 1
         fi
     fi
 
     echo -e "${INFO}[重启] 自动重启 SSH 服务生效...${RESET}"
-    if sudo systemctl restart sshd 2>/dev/null || sudo systemctl restart ssh 2>/dev/null || sudo service ssh restart 2>/dev/null; then
+    if $SUDO systemctl restart sshd 2>/dev/null || $SUDO systemctl restart ssh 2>/dev/null || $SUDO service ssh restart 2>/dev/null; then
         echo -e "${INFO}[成功] SSH 服务已成功重启生效。${RESET}"
     else
         echo -e "${WARN}[警告] 自动重启 SSH 服务失败，请手动重启 ssh 服务${RESET}"
