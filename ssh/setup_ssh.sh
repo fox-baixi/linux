@@ -13,7 +13,7 @@ GITHUB_MIRROR_KEY="https://ghfast.top/https://raw.githubusercontent.com/fox-baix
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 TARGET_KEY_FILE="${SCRIPT_DIR}/target_key.pub"
 
-# 1. 获取目标公钥（优先本地，其次 GitHub 远程）
+# 1. 获取目标公钥
 TARGET_KEY=""
 if [ -f "$TARGET_KEY_FILE" ]; then
     TARGET_KEY=$(grep -v '^[[:space:]]*#' "$TARGET_KEY_FILE" | grep -v '^[[:space:]]*$' | head -n 1)
@@ -23,7 +23,6 @@ if [ -z "$TARGET_KEY" ]; then
     echo -e "${INFO}[网络] 正在从 GitHub 获取最新公钥...${RESET}"
     TARGET_KEY=$(curl -fsSL --connect-timeout 5 "$GITHUB_RAW_KEY" 2>/dev/null | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$' | head -n 1)
     if [ -z "$TARGET_KEY" ]; then
-        # 国内网络镜像降级尝试
         TARGET_KEY=$(curl -fsSL --connect-timeout 5 "$GITHUB_MIRROR_KEY" 2>/dev/null | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$' | head -n 1)
     fi
 fi
@@ -39,7 +38,6 @@ TARGET_CORE=$(echo "$TARGET_KEY" | awk '{print $1, $2}')
 SSH_DIR="$HOME/.ssh"
 AUTH_KEYS="${SSH_DIR}/authorized_keys"
 
-# 3. 获取当前系统的 SSH 状态
 get_password_auth_status() {
     local status="yes"
     local check=""
@@ -130,7 +128,6 @@ disable_password_authentication() {
     restart_sshd
 }
 
-# 交互输入包装（确保在 curl | bash 下依然能从终端读取）
 user_prompt() {
     local prompt_msg="$1"
     local var_name="$2"
@@ -141,7 +138,7 @@ user_prompt() {
     fi
 }
 
-# --- 主检测与执行逻辑 ---
+# --- 检测与单次确认执行 ---
 PASSWORD_STATUS=$(get_password_auth_status)
 HAS_KEYS=$(check_has_keys)
 KEY_MATCH=$(check_key_match)
@@ -155,33 +152,25 @@ if [ "$PASSWORD_STATUS" == "yes" ] && [ "$HAS_KEYS" == "1" ]; then
     echo -e "${WARN}[检测结果] 当前处于: 密码 + 密钥 混合登录状态${RESET}"
     if [ "$KEY_MATCH" == "1" ]; then
         echo -e "${INFO}[公钥校验] 公钥一致，无需更改。${RESET}"
-        user_prompt "${INPUT}当前仍允许密码登录，是否关闭密码登录以提高安全性？[y/N]: ${RESET}" disable_pwd
+        user_prompt "${INPUT}当前仍允许密码登录，是否关闭密码登录？[y/N]: ${RESET}" disable_pwd
         case "$disable_pwd" in
             [yY][eE][sS]|[yY])
                 disable_password_authentication
                 ;;
             *)
-                echo -e "${INFO}[保持] 保持当前混合登录状态。${RESET}"
+                echo -e "${INFO}[保持] 保持当前状态。${RESET}"
                 ;;
         esac
     else
         echo -e "${WARN}[公钥校验] 公钥不符！${RESET}"
-        user_prompt "${INPUT}是否更新为目标公钥？[y/N]: ${RESET}" update_key
+        user_prompt "${INPUT}是否更新为目标公钥并关闭密码登录？[y/N]: ${RESET}" update_key
         case "$update_key" in
             [yY][eE][sS]|[yY])
                 apply_target_key
-                user_prompt "${INPUT}是否同时关闭密码登录？[y/N]: ${RESET}" disable_pwd
-                case "$disable_pwd" in
-                    [yY][eE][sS]|[yY])
-                        disable_password_authentication
-                        ;;
-                    *)
-                        echo -e "${INFO}[保持] 密码登录已保留。${RESET}"
-                        ;;
-                esac
+                disable_password_authentication
                 ;;
             *)
-                echo -e "${INFO}[取消] 未对公钥和密码配置做任何修改。${RESET}"
+                echo -e "${INFO}[取消] 未对公钥和密码做任何修改。${RESET}"
                 ;;
         esac
     fi
@@ -193,15 +182,7 @@ elif [ "$PASSWORD_STATUS" == "yes" ] && [ "$HAS_KEYS" == "0" ]; then
     case "$switch_key" in
         [yY][eE][sS]|[yY])
             apply_target_key
-            user_prompt "${INPUT}是否关闭密码登录？[y/N]: ${RESET}" disable_pwd
-            case "$disable_pwd" in
-                [yY][eE][sS]|[yY])
-                    disable_password_authentication
-                    ;;
-                *)
-                    echo -e "${INFO}[提示] 密钥已配置，密码登录依然保留。${RESET}"
-                    ;;
-            esac
+            disable_password_authentication
             ;;
         *)
             echo -e "${INFO}[取消] 保持密码登录不变。${RESET}"
