@@ -127,7 +127,22 @@ echo -e "\n${INFO}>> 正在全力初始化中，请稍候...${RESET}"
 # 初始化报告变量
 R_WARP="跳过"; R_TOOLS="基础版"; R_BBR="已开启"; R_ZRAM="未启用"; R_SWAP="未启用"; R_DOCKER="未安装"
 
-apt update && apt upgrade -y
+# 汇总待安装软件包
+pkgs=("chrony")
+if [ "$tool_p" == "1" ]; then
+    pkgs+=("git" "nano" "zip" "unzip" "tar" "sudo")
+    R_TOOLS="基础版"
+else
+    pkgs+=("sudo")
+    R_TOOLS="精简版"
+fi
+
+if [ "$zram_on" == "1" ]; then
+    pkgs+=("zram-tools")
+fi
+
+# 一条命令统一安装所有选中组件
+apt install -y "${pkgs[@]}"
 
 # WARP
 if [ "$warp_choice" == "1" ]; then
@@ -144,16 +159,6 @@ if [ "$warp_choice" == "1" ]; then
     fi
 fi
 
-# 工具
-if [ "$tool_p" == "1" ]; then
-    apt install -y git nano zip unzip tar sudo
-    R_TOOLS="基础版"
-else
-    apt install -y sudo
-    R_TOOLS="精简版"
-fi
-apt dist-upgrade -y
-
 # BBR & 时区
 timedatectl set-timezone Asia/Shanghai
 if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf; then
@@ -164,7 +169,6 @@ fi
 
 # ZRAM
 if [ "$zram_on" == "1" ]; then
-    apt install zram-tools -y
     cat > /etc/default/zramswap <<EOF
 ALGO=$final_algo
 SIZE=$zram_s
@@ -208,7 +212,7 @@ EOF
     R_DOCKER="已安装 (含 IPv6 & 日志限制)"
 fi
 
-apt install chrony -y && systemctl enable --now chrony
+systemctl enable --now chrony
 
 # --- ZRAM 状态健康检查与自愈 ---
 if [ "$zram_on" == "1" ]; then
