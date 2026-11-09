@@ -11,7 +11,7 @@ RESET='\033[0m'      # 重置
 mem_total=$(free -m | awk '/Mem:/ {print $2}')
 cpu_cores=$(nproc)
 cpu_model=$(grep "model name" /proc/cpuinfo | head -1 | cut -d ":" -f2)
-disk_total=$(df -m / | awk 'NR==2 {print $2}')
+disk_total=$(df -m --output=size / | tail -n 1 | tr -d ' ')
 
 # IPv4 / IPv6 双栈连通性检测 (ping + curl 双重检测保障准确性)
 has_v4=0; has_v6=0
