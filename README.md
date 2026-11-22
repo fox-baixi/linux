@@ -20,6 +20,14 @@ bash <(curl -fsSL https://raw.githubusercontent.com/fox-baixi/linux/main/ssh/aut
 bash <(curl -fsSL https://raw.githubusercontent.com/fox-baixi/linux/main/ssh/setup_ssh.sh)
 ```
 
+#### 方式 C：dsh 专属受限公钥管理（限制来源 IP，安全增量追加/更新）
+- **专属公钥文件**：[`ssh/dsh_key.pub`](ssh/dsh_key.pub)
+- **特性**：不覆盖、不冲突原有公钥；自动比对 `dsh` 标识公钥及 IP 限制规则，已是最新则跳过，旧版本则自动更新：
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/fox-baixi/linux/main/ssh/dsh_ssh.sh)
+```
+
+
 ---
 
 ### 2. 系统初始化脚本 (`init.sh`)

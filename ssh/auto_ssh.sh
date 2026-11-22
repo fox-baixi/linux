@@ -77,6 +77,17 @@ get_password_auth_status() {
     echo "$status"
 }
 
+is_dsh_line() {
+    local line="$1"
+    [[ "$line" =~ ^[[:space:]]*# ]] && return 1
+    [[ -z "${line// }" ]] && return 1
+    # 依据 dsh 特殊标识识别 AI Agent 专属密钥（不硬编码任何公钥内容）
+    if echo "$line" | grep -qE '([[:space:]]|"|^)dsh(@|[[:space:]]|$)'; then
+        return 0
+    fi
+    return 1
+}
+
 check_key_match() {
     if [ -f "$AUTH_KEYS" ]; then
         while IFS= read -r line || [ -n "$line" ]; do
@@ -96,10 +107,28 @@ check_key_match() {
 apply_target_key() {
     mkdir -p "$SSH_DIR"
     chmod 700 "$SSH_DIR"
+
+    # 提取已有的 AI Agent 专属密钥 (dsh)，防止覆盖丢失
+    local dsh_lines=()
     if [ -f "$AUTH_KEYS" ]; then
-        cp "$AUTH_KEYS" "${AUTH_KEYS}.bak.$(date +%s)"
+        while IFS= read -r line || [ -n "$line" ]; do
+            if is_dsh_line "$line"; then
+                dsh_lines+=("$line")
+            fi
+        done < "$AUTH_KEYS"
     fi
+
+    # 写入目标主公钥
     echo "$TARGET_KEY" > "$AUTH_KEYS"
+
+    # 若原先存在 AI Agent (dsh) 专属密钥，自动保留追加
+    if [ ${#dsh_lines[@]} -gt 0 ]; then
+        for dline in "${dsh_lines[@]}"; do
+            echo "$dline" >> "$AUTH_KEYS"
+        done
+        echo -e "${INFO}[保护] 检测到已存在 AI Agent 专属密钥 (dsh)，已自动安全保留！${RESET}"
+    fi
+
     chmod 600 "$AUTH_KEYS"
     echo -e "${INFO}[成功] 目标公钥已配置: ${AUTH_KEYS} (权限 600)${RESET}"
 }
