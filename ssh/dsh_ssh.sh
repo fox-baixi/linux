@@ -76,8 +76,11 @@ _ipv6_to_cidr() {
 
 # 解析出一个 CIDR 列表（去重、保持顺序）
 # 只取当前 SSH 会话的客户端地址，绝不要把服务器自身地址写进白名单。
+# 归并策略：同一协议族用新地址替换旧的，另一协议族沿用现有记录。
+# 这样从 IPv4 登录执行时不会把已有 IPv6 白名单冲掉，反之亦然。
 _detect_allowed_cidrs() {
-    local client_ip="" cidr="" out=""
+    local client_ip="" cidr="" out="" fam="" c rest=""
+    local ak="${HOME}/.ssh/authorized_keys"
 
     if [ -n "${DSH_ALLOW_CIDRS:-}" ]; then
         echo "${DSH_ALLOW_CIDRS}"
@@ -92,18 +95,47 @@ _detect_allowed_cidrs() {
     fi
 
     case "$client_ip" in
-        *:*) cidr=$(_ipv6_to_cidr "$client_ip") ;;
-        *.*) cidr=$(_ipv4_to_cidr "$client_ip") ;;
-        *)   cidr="" ;;
+        *:*) cidr=$(_ipv6_to_cidr "$client_ip"); fam="v6" ;;
+        *.*) cidr=$(_ipv4_to_cidr "$client_ip"); fam="v4" ;;
+        *)   cidr=""; fam="" ;;
     esac
 
-    out="$cidr"
-
-    if [ -z "$out" ]; then
+    # 兜底：拿不到会话地址时用默认值
+    if [ -z "$cidr" ]; then
         echo "$IP_RULE_FALLBACK"
-    else
-        echo "$out"
+        return 0
     fi
+
+    # 保留另一协议族已有的白名单，避免互相覆盖
+    if [ -f "$ak" ]; then
+        rest=$(grep -E "${KEY_IDENTIFIER}(@|[[:space:]]|$)" "$ak" 2>/dev/null | head -n 1 |
+            grep -o 'from="[^"]*"' | sed 's/^from="//; s/"$//')
+        local -a prev kept
+        local item p_fam
+        IFS=',' read -r -a prev <<<"$rest"
+        for item in "${prev[@]}"; do
+            [ -z "$item" ] && continue
+            case "$item" in
+                *:*) p_fam="v6" ;;
+                *)   p_fam="v4" ;;
+            esac
+            [ "$p_fam" = "$fam" ] && continue   # 同族旧记录丢弃
+            kept+=("$item")
+        done
+        for item in "${kept[@]:-}"; do
+            [ -z "$item" ] && continue
+            out="${out:+$out,}$item"
+        done
+    fi
+
+    # IPv4 排在前面，输出稳定
+    if [ "$fam" = "v4" ]; then
+        out="${cidr}${out:+,$out}"
+    else
+        out="${out:+$out,}$cidr"
+    fi
+
+    echo "$out"
 }
 
 ALLOW_CIDRS="$(_detect_allowed_cidrs)"
