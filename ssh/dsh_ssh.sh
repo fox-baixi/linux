@@ -39,8 +39,8 @@ TARGET_KEY_FILE="${SCRIPT_DIR}/dsh_key.pub"
 # 不再写死单一 IPv4 网段（家宽换段后规则立即失效），改为运行时按当前 SSH 会话
 # 自动识别调用方地址，IPv4 与 IPv6 同时覆盖：
 #   - IPv4 客户端 → 自动归并为 /24
-#   - IPv6 客户端 → 自动归并为 /64
-# 如需强制指定，设置环境变量 DSH_ALLOW_CIDRS="1.2.3.0/24,2409:xxxx:xxxx:xxxx::/64"
+#   - IPv6 客户端 → 自动归并为 /48
+# 如需强制指定，设置环境变量 DSH_ALLOW_CIDRS="1.2.3.0/24,2409:xxxx:xxxx::/48"
 # 检测不到会话地址时（例如本地控制台执行）才回退到下面的默认值。
 IP_RULE_FALLBACK="183.193.171.0/24,2409:8a1e:6f41::/48"
 KEY_IDENTIFIER="dsh"
@@ -51,7 +51,7 @@ _ipv4_to_cidr() {
     echo "${ip%.*}.0/24"
 }
 
-# IPv6 地址 → /64 网段（"::" 简写会自动补 0）
+# IPv6 地址 → /48 网段（"::" 简写会自动补 0）
 _ipv6_to_cidr() {
     local ip="$1" left part out="" n=0 i
     local -a parts
@@ -62,20 +62,16 @@ _ipv6_to_cidr() {
     IFS=: read -r -a parts <<<"$left"
     n=${#parts[@]}
     [ "$n" -eq 0 ] && return 1
-    for ((i = 0; i < 4; i++)); do
+    for ((i = 0; i < 3; i++)); do
         part="${parts[i]:-}"
-        if [ -n "$part" ] && [ "$i" -lt "$n" ]; then
-            out+="${part}:"
-        else
-            out+="0:"
-        fi
+        [ -z "$part" ] && part="0"
+        out+="${part}:"
     done
-    out+=":"
-    # 压缩尾部零位：2001:db8:0:0:: → 2001:db8::
-    while [[ "$out" == *":0:0::"* ]]; do
-        out="${out//:0:0::/::}"
+    # 去掉尾部 0 组：2001:db8:0: → 2001:db8:
+    while [[ "$out" == *":0:" ]]; do
+        out="${out%:0:}:"
     done
-    echo "${out}/64"
+    echo "${out}:/48"
 }
 
 # 解析出一个 CIDR 列表（去重、保持顺序）
